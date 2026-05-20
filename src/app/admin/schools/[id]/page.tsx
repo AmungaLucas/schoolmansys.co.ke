@@ -21,6 +21,8 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -45,6 +47,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 
 interface SchoolDetail {
   id: string;
@@ -126,6 +129,15 @@ export default function SchoolDetailPage() {
   } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  // Delete confirmation
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Edit email dialog
+  const [editEmailOpen, setEditEmailOpen] = useState(false);
+  const [editEmailValue, setEditEmailValue] = useState('');
+  const [editEmailLoading, setEditEmailLoading] = useState(false);
+
   // Resend invite
   const [resendLoading, setResendLoading] = useState(false);
   const [resendResult, setResendResult] = useState<{
@@ -179,6 +191,58 @@ export default function SchoolDetailPage() {
       toast.error('Network error');
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleteLoading(true);
+    try {
+      const res = await fetch(`/api/admin/schools/${schoolId}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        toast.error(json.error?.message || 'Failed to delete school');
+        return;
+      }
+      toast.success(`"${school?.name}" has been permanently deleted`);
+      setDeleteConfirm(false);
+      router.push('/admin/schools');
+    } catch {
+      toast.error('Network error');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const handleEditEmail = async () => {
+    if (!editEmailValue.trim()) {
+      toast.error('Email is required');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editEmailValue.trim())) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+    setEditEmailLoading(true);
+    try {
+      const res = await fetch(`/api/admin/schools/${schoolId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminEmail: editEmailValue.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        toast.error(json.error?.message || 'Failed to update email');
+        return;
+      }
+      toast.success('Admin email updated successfully');
+      setEditEmailOpen(false);
+      fetchSchool();
+    } catch {
+      toast.error('Network error');
+    } finally {
+      setEditEmailLoading(false);
     }
   };
 
@@ -363,6 +427,14 @@ export default function SchoolDetailPage() {
             <Archive className="w-4 h-4 mr-1" />
             Archive
           </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => setDeleteConfirm(true)}
+          >
+            <Trash2 className="w-4 h-4 mr-1" />
+            Delete
+          </Button>
         </div>
       </div>
 
@@ -484,8 +556,19 @@ export default function SchoolDetailPage() {
                           </span>
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm">{user.name}</p>
-                          <p className="text-xs text-muted-foreground">{user.email}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium text-sm">{user.name}</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <p className="text-xs text-muted-foreground">{user.email}</p>
+                            <button
+                              onClick={() => { setEditEmailOpen(true); setEditEmailValue(user.email); }}
+                              className="text-muted-foreground hover:text-emerald-600 transition-colors"
+                              title="Edit email"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                          </div>
                           <p className="text-xs text-muted-foreground mt-1">
                             Role: {user.role?.name || 'Admin'}
                           </p>
@@ -630,7 +713,7 @@ export default function SchoolDetailPage() {
         </TabsContent>
       </Tabs>
 
-      {/* Action confirmation dialog */}
+      {/* Action confirmation dialog (status change) */}
       <Dialog open={!!confirmAction} onOpenChange={() => setConfirmAction(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -652,6 +735,97 @@ export default function SchoolDetailPage() {
             >
               {actionLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               {confirmAction?.label}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={deleteConfirm} onOpenChange={setDeleteConfirm}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="w-5 h-5" />
+              Delete School Permanently
+            </DialogTitle>
+            <DialogDescription>
+              This will permanently delete <strong>{school.name}</strong> and ALL associated data including
+              students, staff, classes, attendance records, fee payments, assessments, and more.
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {school._count.students > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-md p-3 text-sm text-red-800">
+              <strong>Warning:</strong> This school has {school._count.students} student(s), {school._count.staff} staff member(s),
+              and {school._count.classes} class(es). All data will be permanently lost.
+            </div>
+          )}
+          <div className="flex items-center gap-2 py-1">
+            <Label className="text-sm font-medium">Type the school name to confirm:</Label>
+            <code className="text-sm bg-muted px-2 py-0.5 rounded font-mono">{school.name}</code>
+          </div>
+          <Input
+            placeholder={`Type "${school.name}" to confirm`}
+            id="delete-confirm-input"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirm(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleteLoading}
+            >
+              {deleteLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Delete Permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Email dialog */}
+      <Dialog open={editEmailOpen} onOpenChange={setEditEmailOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="w-4 h-4" />
+              Edit Admin Email
+            </DialogTitle>
+            <DialogDescription>
+              Update the admin email address for <strong>{school.name}</strong>.
+              The invite link will remain valid for the old email until a new invite is sent.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-email">New Email Address</Label>
+              <Input
+                id="edit-email"
+                type="email"
+                value={editEmailValue}
+                onChange={(e) => setEditEmailValue(e.target.value)}
+                placeholder="admin@school.co.ke"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditEmailOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={handleEditEmail}
+              disabled={editEmailLoading || !editEmailValue.trim()}
+            >
+              {editEmailLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save Email'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

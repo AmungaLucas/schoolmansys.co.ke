@@ -650,6 +650,14 @@ export default function SchoolsPage() {
                               <Archive className="w-4 h-4 mr-2" />
                               Archive
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => handleDeleteSchool(school)}
+                              className="text-red-600 focus:text-red-600"
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete Permanently
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>

@@ -62,6 +62,9 @@ export async function GET(
   }
 }
 
+/**
+ * PATCH - Update school status OR edit admin email
+ */
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -77,11 +80,97 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await request.json();
-    const { status, planId, expiryDate } = body;
+    const { status, planId, expiryDate, adminEmail } = body;
 
+    const tenant = await db.tenant.findUnique({
+      where: { id, deletedAt: null },
+      include: {
+        users: {
+          where: { roleId: { not: null } },
+          take: 1,
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+
+    if (!tenant) {
+      return NextResponse.json(
+        { success: false, error: { code: "NOT_FOUND", message: "School not found" } },
+        { status: 404 }
+      );
+    }
+
+    // ---- EDIT ADMIN EMAIL ----
+    if (adminEmail) {
+      const newEmail = adminEmail.toLowerCase().trim();
+
+      if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+        return NextResponse.json(
+          { success: false, error: { code: "VALIDATION_ERROR", message: "A valid email address is required" } },
+          { status: 400 }
+        );
+      }
+
+      const adminUser = tenant.users[0];
+      if (!adminUser) {
+        return NextResponse.json(
+          { success: false, error: { code: "NO_ADMIN", message: "No admin user found for this school" } },
+          { status: 404 }
+        );
+      }
+
+      // Check email uniqueness within the same tenant
+      const existing = await db.user.findFirst({
+        where: {
+          tenantId: id,
+          email: newEmail,
+          deletedAt: null,
+          id: { not: adminUser.id },
+        },
+      });
+      if (existing) {
+        return NextResponse.json(
+          { success: false, error: { code: "DUPLICATE_EMAIL", message: "A user with this email already exists in this school" } },
+          { status: 409 }
+        );
+      }
+
+      const oldEmail = adminUser.email;
+
+      // Update user email
+      await db.user.update({
+        where: { id: adminUser.id },
+        data: { email: newEmail },
+      });
+
+      // Update linked staff record if exists
+      await db.staff.updateMany({
+        where: { tenantId: id, email: oldEmail },
+        data: { email: newEmail },
+      });
+
+      // Audit log
+      await db.auditLog.create({
+        data: {
+          action: "UPDATE_ADMIN_EMAIL",
+          entityType: "User",
+          entityId: adminUser.id,
+          details: JSON.stringify({ tenantId: id, tenantName: tenant.name, from: oldEmail, to: newEmail }),
+          actorId: admin.userId,
+          actorType: "global_user",
+        },
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: { email: newEmail },
+      });
+    }
+
+    // ---- UPDATE STATUS ----
     if (!status) {
       return NextResponse.json(
-        { success: false, error: { code: "VALIDATION_ERROR", message: "Status is required" } },
+        { success: false, error: { code: "VALIDATION_ERROR", message: "Status or adminEmail is required" } },
         { status: 400 }
       );
     }
@@ -91,14 +180,6 @@ export async function PATCH(
       return NextResponse.json(
         { success: false, error: { code: "VALIDATION_ERROR", message: `Invalid status. Must be one of: ${validStatuses.join(", ")}` } },
         { status: 400 }
-      );
-    }
-
-    const tenant = await db.tenant.findUnique({ where: { id, deletedAt: null } });
-    if (!tenant) {
-      return NextResponse.json(
-        { success: false, error: { code: "NOT_FOUND", message: "School not found" } },
-        { status: 404 }
       );
     }
 
@@ -128,6 +209,102 @@ export async function PATCH(
     console.error("Update school error:", error);
     return NextResponse.json(
       { success: false, error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * DELETE - Hard-delete a school and ALL its data (irreversible)
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const admin = await requireAdmin(request);
+    if (!admin) {
+      return NextResponse.json(
+        { success: false, error: { code: "UNAUTHORIZED", message: "Admin authentication required" } },
+        { status: 401 }
+      );
+    }
+
+    const { id } = await params;
+
+    const tenant = await db.tenant.findUnique({
+      where: { id, deletedAt: null },
+    });
+
+    if (!tenant) {
+      return NextResponse.json(
+        { success: false, error: { code: "NOT_FOUND", message: "School not found" } },
+        { status: 404 }
+      );
+    }
+
+    // Hard delete in dependency order (deepest first) within a transaction
+    await db.$transaction(async (tx) => {
+      // 1. Nested child records (via parent FKs)
+      await tx.curriculumSubStrand.deleteMany({ where: { strand: { tenantId: id } } });
+      await tx.curriculumStrand.deleteMany({ where: { tenantId: id } });
+      await tx.term.deleteMany({ where: { academicYear: { tenantId: id } } });
+      await tx.studentGuardian.deleteMany({ where: { student: { tenantId: id } } });
+      await tx.enrolment.deleteMany({ where: { student: { tenantId: id } } });
+      await tx.assessment.deleteMany({ where: { tenantId: id } });
+      await tx.grade.deleteMany({ where: { tenantId: id } });
+      await tx.conductRecord.deleteMany({ where: { tenantId: id } });
+      await tx.healthRecord.deleteMany({ where: { tenantId: id } });
+      await tx.transportAssignment.deleteMany({ where: { tenantId: id } });
+
+      // 2. Direct child records
+      await tx.attendanceArchive.deleteMany({ where: { tenantId: id } });
+      await tx.attendance.deleteMany({ where: { tenantId: id } });
+      await tx.feePayment.deleteMany({ where: { tenantId: id } });
+      await tx.mpesaTransaction.deleteMany({ where: { tenantId: id } });
+      await tx.messageQueue.deleteMany({ where: { tenantId: id } });
+      await tx.learningArea.deleteMany({ where: { tenantId: id } });
+      await tx.class.deleteMany({ where: { tenantId: id } });
+      await tx.academicYear.deleteMany({ where: { tenantId: id } });
+      await tx.learningLevel.deleteMany({ where: { tenantId: id } });
+      await tx.transportRoute.deleteMany({ where: { tenantId: id } });
+      await tx.salaryScale.deleteMany({ where: { tenantId: id } });
+      await tx.feeStructure.deleteMany({ where: { tenantId: id } });
+      await tx.student.deleteMany({ where: { tenantId: id } });
+      await tx.guardian.deleteMany({ where: { tenantId: id } });
+      await tx.staff.deleteMany({ where: { tenantId: id } });
+
+      // 3. Users and roles (must come after staff/students which may reference users)
+      await tx.user.deleteMany({ where: { tenantId: id } });
+      await tx.role.deleteMany({ where: { tenantId: id } });
+
+      // 4. Payments (global-level but scoped to this tenant)
+      await tx.payment.deleteMany({ where: { tenantId: id } });
+
+      // 5. Finally, delete the tenant itself
+      await tx.tenant.delete({ where: { id } });
+    });
+
+    // Audit log (outside transaction since tenant is deleted)
+    await db.auditLog.create({
+      data: {
+        action: "DELETE_SCHOOL",
+        entityType: "Tenant",
+        entityId: id,
+        details: JSON.stringify({ tenantName: tenant.name, subdomain: tenant.subdomain }),
+        actorId: admin.userId,
+        actorType: "global_user",
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: { message: `School "${tenant.name}" and all associated data have been permanently deleted` },
+    });
+  } catch (error) {
+    console.error("Delete school error:", error);
+    return NextResponse.json(
+      { success: false, error: { code: "INTERNAL_ERROR", message: "Failed to delete school. Please try again." } },
       { status: 500 }
     );
   }

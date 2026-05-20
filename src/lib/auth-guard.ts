@@ -35,6 +35,7 @@ export async function requireAdmin(
 /**
  * Verify school user session for a specific tenant.
  * Returns the user session data or null if not authenticated.
+ * Also blocks access if the tenant is suspended or archived.
  */
 export async function requireSchoolUser(
   _request: NextRequest,
@@ -45,6 +46,14 @@ export async function requireSchoolUser(
     if (!session) return null;
     if (session.userType !== "school") return null;
     if (session.tenantId !== tenantId) return null;
+
+    // Verify tenant exists and is not suspended/archived
+    const tenant = await db.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, status: true, deletedAt: true },
+    });
+    if (!tenant || tenant.deletedAt) return null;
+    if (tenant.status === "suspended" || tenant.status === "archived") return null;
 
     // Verify user still exists and is active
     const user = await db.user.findFirst({
