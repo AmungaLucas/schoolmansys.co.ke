@@ -305,7 +305,7 @@ export default function SchoolLayout({ children }: { children: ReactNode }) {
 
           {/* Footer */}
           <footer className="border-t border-gray-200 bg-white py-3 px-4 text-center text-xs text-gray-400 shrink-0">
-            &copy; {new Date().getFullYear()} SchoolManSys &mdash; School Management System
+            &copy; 2026 SchoolManSys &mdash; School Management System
           </footer>
         </div>
 

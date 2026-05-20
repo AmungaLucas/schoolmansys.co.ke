@@ -61,6 +61,7 @@ model Tenant {
   transportRoutes      TransportRoute[]
   transportAssignments TransportAssignment[]
   salaryScales         SalaryScale[]
+  mpesaTransactions    MpesaTransaction[]
 }
 
 model Plan {
@@ -94,6 +95,42 @@ model Payment {
 
   tenant          Tenant   @relation(fields: [tenantId], references: [id])
   plan            Plan?    @relation(fields: [planId], references: [id])
+}
+
+/// Tracks M-Pesa STK Push initiated payments for school fees.
+/// Created when an STK Push is initiated, updated by the callback.
+model MpesaTransaction {
+  id                String    @id @default(cuid())
+  tenantId          String
+  studentId         String
+  feeStructureId    String?
+  /// Daraja CheckoutRequestID for matching the callback
+  checkoutRequestId String    @unique
+  merchantRequestId String?
+  /// Phone number that received the STK Push prompt
+  phoneNumber       String
+  /// Amount requested in KES
+  amount            Float
+  /// Account reference sent to M-Pesa (e.g., admission number)
+  accountReference  String
+  /// Pending -> success / failed / cancelled
+  status            String    @default("pending")
+  /// M-Pesa receipt number (set on success)
+  mpesaReceipt      String?
+  /// Full result description from Daraja
+  resultDesc        String?
+  /// The created FeePayment id (set on success)
+  feePaymentId      String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant        Tenant      @relation(fields: [tenantId], references: [id])
+  student       Student     @relation(fields: [studentId], references: [id])
+
+  @@index([tenantId])
+  @@index([studentId])
+  @@index([checkoutRequestId])
+  @@index([status])
 }
 
 model AuditLog {
@@ -363,6 +400,7 @@ model Student {
   conductRecords       ConductRecord[]
   healthRecords        HealthRecord[]
   transportAssignments TransportAssignment[]
+  mpesaTransactions    MpesaTransaction[]
   userIdUser           User?               @relation("StudentUser", fields: [userId], references: [id])
 
   @@unique([tenantId, admissionNumber])

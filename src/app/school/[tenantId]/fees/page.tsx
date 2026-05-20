@@ -1,8 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
-import { Plus, Loader2, Wallet, Search, ChevronLeft, ChevronRight, CreditCard } from 'lucide-react';
+import {
+  Plus, Loader2, Wallet, Search, ChevronLeft, ChevronRight, CreditCard,
+  Smartphone, CheckCircle2, XCircle, Clock, RefreshCw,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,6 +39,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useSchool } from '../layout';
+
+// ============================================================================
+// Types
+// ============================================================================
 
 interface FeeStructure {
   id: string;
@@ -80,10 +87,20 @@ interface AcademicYear {
   name: string;
 }
 
-interface Term {
+interface MpesaTransaction {
   id: string;
-  name: string;
+  amount: number;
+  phoneNumber: string;
+  status: string;
+  mpesaReceipt: string | null;
+  resultDesc: string | null;
+  accountReference: string;
+  createdAt: string;
 }
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES', minimumFractionDigits: 0 }).format(amount);
@@ -94,18 +111,54 @@ function formatDate(dateStr: string | null) {
   return new Date(dateStr).toLocaleDateString('en-KE', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+function formatTime(dateStr: string) {
+  return new Date(dateStr).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' });
+}
+
+function normalizePhone(phone: string): string {
+  let p = phone.replace(/\s+/g, '');
+  if (p.startsWith('+254')) return p;
+  if (p.startsWith('254')) return p;
+  if (p.startsWith('07') || p.startsWith('01')) return `254${p}`;
+  return p;
+}
+
+// ============================================================================
+// M-Pesa Status Badge
+// ============================================================================
+
+function MpesaStatusBadge({ status }: { status: string }) {
+  switch (status) {
+    case 'success':
+      return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1"><CheckCircle2 className="w-3 h-3" /> Success</Badge>;
+    case 'pending':
+      return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 gap-1"><Clock className="w-3 h-3" /> Pending</Badge>;
+    case 'failed':
+      return <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 gap-1"><XCircle className="w-3 h-3" /> Failed</Badge>;
+    case 'cancelled':
+      return <Badge variant="outline" className="bg-gray-50 text-gray-600 border-gray-200 gap-1"><XCircle className="w-3 h-3" /> Cancelled</Badge>;
+    default:
+      return <Badge variant="outline">{status}</Badge>;
+  }
+}
+
+// ============================================================================
+// Main Component
+// ============================================================================
+
 export default function FeesPage() {
   const { tenantId } = useSchool();
-  const params = useParams();
 
   const [structures, setStructures] = useState<FeeStructure[]>([]);
   const [payments, setPayments] = useState<FeePayment[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
+  const [mpesaTransactions, setMpesaTransactions] = useState<MpesaTransaction[]>([]);
 
   const [loadingStructures, setLoadingStructures] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
+  const [loadingMpesa, setLoadingMpesa] = useState(true);
   const [paymentPage, setPaymentPage] = useState(1);
   const [paymentTotalPages, setPaymentTotalPages] = useState(1);
   const [paymentSearch, setPaymentSearch] = useState('');
@@ -131,11 +184,26 @@ export default function FeesPage() {
     reference: '',
   });
 
+  // M-Pesa dialog
+  const [mpesaDialogOpen, setMpesaDialogOpen] = useState(false);
+  const [mpesaSubmitting, setMpesaSubmitting] = useState(false);
+  const [mpesaForm, setMpesaForm] = useState({
+    studentId: '',
+    amount: '',
+    phoneNumber: '',
+  });
+  const [mpesaPollInterval, setMpesaPollInterval] = useState<ReturnType<typeof setInterval> | null>(null);
+  const mpesaPollingStudentRef = useRef<string | null>(null);
+
   // Breakdown items for structure
   const [breakdownItems, setBreakdownItems] = useState<{ name: string; amount: string }[]>([
     { name: 'Tuition', amount: '' },
     { name: 'Exam', amount: '' },
   ]);
+
+  // ============================================================================
+  // Data Fetching
+  // ============================================================================
 
   const fetchStructures = useCallback(async () => {
     setLoadingStructures(true);
@@ -168,6 +236,30 @@ export default function FeesPage() {
     }
   }, [tenantId, paymentPage, paymentSearch]);
 
+  const fetchMpesaTransactions = useCallback(async () => {
+    setLoadingMpesa(true);
+    try {
+      // Get latest M-Pesa transactions across all students (recent 48h)
+      const recentPayments = await fetch(`/api/school/${tenantId}/fees/payments?limit=50&method=mpesa`);
+      const payJson = await recentPayments.json();
+      if (payJson.success) {
+        // Also get pending via mpesa-initiate status for the polling student
+        if (mpesaPollingStudentRef.current) {
+          const statusRes = await fetch(`/api/school/${tenantId}/fees/mpesa-initiate?studentId=${mpesaPollingStudentRef.current}`);
+          const statusJson = await statusRes.json();
+          if (statusJson.success && statusJson.data.hasPending) {
+            // Merge pending txns into the list
+            setMpesaTransactions(statusJson.data.transactions);
+          }
+        }
+      }
+    } catch {
+      // silent
+    } finally {
+      setLoadingMpesa(false);
+    }
+  }, [tenantId]);
+
   useEffect(() => {
     fetchStructures();
     fetchPayments();
@@ -191,6 +283,17 @@ export default function FeesPage() {
     }
     fetchMeta();
   }, [tenantId]);
+
+  // Clean up polling interval on unmount
+  useEffect(() => {
+    return () => {
+      if (mpesaPollInterval) clearInterval(mpesaPollInterval);
+    };
+  }, [mpesaPollInterval]);
+
+  // ============================================================================
+  // Handlers
+  // ============================================================================
 
   const handleCreateStructure = async () => {
     if (!structureForm.name || !structureForm.academicYearId) {
@@ -257,6 +360,10 @@ export default function FeesPage() {
         setPaymentDialogOpen(false);
         setPaymentForm({ studentId: '', amount: '', method: 'cash', reference: '' });
         fetchPayments();
+        // Refresh student list to update balances
+        const sRes = await fetch(`/api/school/${tenantId}/students?limit=100`);
+        const sJson = await sRes.json();
+        if (sJson.success) setStudents(sJson.data.students);
       } else {
         toast.error(json.error?.message || 'Failed to record payment');
       }
@@ -266,6 +373,117 @@ export default function FeesPage() {
       setPaymentSubmitting(false);
     }
   };
+
+  const handleMpesaInitiate = async () => {
+    if (!mpesaForm.studentId || !mpesaForm.amount || !mpesaForm.phoneNumber) {
+      toast.error('Student, amount, and phone number are required');
+      return;
+    }
+
+    const phone = normalizePhone(mpesaForm.phoneNumber);
+    if (phone.length < 12) {
+      toast.error('Enter a valid Kenyan phone number (e.g., 0712345678)');
+      return;
+    }
+
+    setMpesaSubmitting(true);
+    try {
+      const res = await fetch(`/api/school/${tenantId}/fees/mpesa-initiate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: mpesaForm.studentId,
+          amount: Number(mpesaForm.amount),
+          phoneNumber: phone,
+        }),
+      });
+      const json = await res.json();
+
+      if (json.success) {
+        toast.success('M-Pesa prompt sent', {
+          description: `KES ${Number(mpesaForm.amount).toLocaleString()} - Check your phone to confirm`,
+          duration: 8000,
+        });
+
+        // Start polling for the result
+        mpesaPollingStudentRef.current = mpesaForm.studentId;
+        if (mpesaPollInterval) clearInterval(mpesaPollInterval);
+
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusRes = await fetch(
+              `/api/school/${tenantId}/fees/mpesa-initiate?studentId=${mpesaForm.studentId}`
+            );
+            const statusJson = await statusRes.json();
+            if (statusJson.success && statusJson.data.pendingTransaction) {
+              const pending = statusJson.data.pendingTransaction;
+              if (pending.status !== 'pending') {
+                clearInterval(pollInterval);
+                setMpesaPollInterval(null);
+                mpesaPollingStudentRef.current = null;
+
+                if (pending.status === 'success') {
+                  toast.success('M-Pesa payment confirmed!', {
+                    description: `Receipt: ${pending.mpesaReceipt || 'N/A'} - KES ${pending.amount.toLocaleString()}`,
+                    duration: 10000,
+                  });
+                  fetchPayments();
+                  // Refresh student list
+                  const sRes = await fetch(`/api/school/${tenantId}/students?limit=100`);
+                  const sJson = await sRes.json();
+                  if (sJson.success) setStudents(sJson.data.students);
+                } else {
+                  toast.error('M-Pesa payment failed', {
+                    description: pending.resultDesc || 'The payment was not completed',
+                  });
+                }
+              }
+            }
+          } catch {
+            // Poll silently
+          }
+        }, 5000); // Poll every 5 seconds
+
+        setMpesaPollInterval(pollInterval);
+
+        // Auto-stop polling after 3 minutes (STK Push expires in ~60s)
+        setTimeout(() => {
+          if (mpesaPollInterval) {
+            clearInterval(mpesaPollInterval);
+            setMpesaPollInterval(null);
+            mpesaPollingStudentRef.current = null;
+            toast.info('M-Pesa polling stopped - payment confirmation timed out');
+          }
+        }, 180000);
+
+        // Don't close dialog immediately - show a pending state
+        setMpesaSubmitting(false);
+        // Reset form after a short delay
+        setTimeout(() => {
+          setMpesaForm({ studentId: '', amount: '', phoneNumber: '' });
+        }, 500);
+
+      } else {
+        toast.error(json.error?.message || 'Failed to initiate M-Pesa payment');
+        setMpesaSubmitting(false);
+      }
+    } catch {
+      toast.error('Network error - could not reach M-Pesa');
+      setMpesaSubmitting(false);
+    }
+  };
+
+  // Set amount to student's balance when student is selected in M-Pesa form
+  const handleMpesaStudentChange = (studentId: string) => {
+    const student = students.find((s) => s.id === studentId);
+    setMpesaForm((prev) => ({
+      ...prev,
+      studentId,
+      amount: student && student.currentFeeBalance > 0 ? String(Math.ceil(student.currentFeeBalance)) : prev.amount,
+    }));
+  };
+
+  const selectedStudent = students.find((s) => s.id === mpesaForm.studentId);
 
   return (
     <div className="space-y-4">
@@ -279,9 +497,10 @@ export default function FeesPage() {
         <TabsList>
           <TabsTrigger value="structures" className="gap-1.5"><Wallet className="w-3.5 h-3.5" /> Fee Structures</TabsTrigger>
           <TabsTrigger value="payments" className="gap-1.5"><CreditCard className="w-3.5 h-3.5" /> Payments</TabsTrigger>
+          <TabsTrigger value="mpesa" className="gap-1.5"><Smartphone className="w-3.5 h-3.5" /> M-Pesa</TabsTrigger>
         </TabsList>
 
-        {/* Fee Structures */}
+        {/* Fee Structures Tab */}
         <TabsContent value="structures" className="space-y-4">
           <div className="flex justify-end">
             <Dialog open={structureDialogOpen} onOpenChange={setStructureDialogOpen}>
@@ -428,7 +647,7 @@ export default function FeesPage() {
           </Card>
         </TabsContent>
 
-        {/* Payments */}
+        {/* Payments Tab */}
         <TabsContent value="payments" className="space-y-4">
           <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
             <div className="relative flex-1">
@@ -440,73 +659,74 @@ export default function FeesPage() {
                 className="pl-9"
               />
             </div>
-            <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
-              <DialogTrigger asChild>
-                <Button className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2">
-                  <Plus className="w-4 h-4" />
-                  Record Payment
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                  <DialogTitle>Record Fee Payment</DialogTitle>
-                  <DialogDescription>Record a new fee payment from a student.</DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="space-y-2">
-                    <Label>Student *</Label>
-                    <Select value={paymentForm.studentId} onValueChange={(v) => setPaymentForm({ ...paymentForm, studentId: v })}>
-                      <SelectTrigger><SelectValue placeholder="Search and select student" /></SelectTrigger>
-                      <SelectContent>
-                        {students.map((s) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.firstName} {s.lastName} ({s.admissionNumber}) - Bal: {formatCurrency(s.currentFeeBalance)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Amount *</Label>
-                    <Input
-                      type="number"
-                      value={paymentForm.amount}
-                      onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
-                      placeholder="Enter amount"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
+            <div className="flex gap-2">
+              <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2">
+                    <Plus className="w-4 h-4" />
+                    Record Payment
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Record Fee Payment</DialogTitle>
+                    <DialogDescription>Record a new fee payment from a student (cash, bank, or manual M-Pesa).</DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-4 py-4">
                     <div className="space-y-2">
-                      <Label>Method</Label>
-                      <Select value={paymentForm.method} onValueChange={(v) => setPaymentForm({ ...paymentForm, method: v })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
+                      <Label>Student *</Label>
+                      <Select value={paymentForm.studentId} onValueChange={(v) => setPaymentForm({ ...paymentForm, studentId: v })}>
+                        <SelectTrigger><SelectValue placeholder="Search and select student" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="cash">Cash</SelectItem>
-                          <SelectItem value="mpesa">M-Pesa</SelectItem>
-                          <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                          <SelectItem value="cheque">Cheque</SelectItem>
+                          {students.map((s) => (
+                            <SelectItem key={s.id} value={s.id}>
+                              {s.firstName} {s.lastName} ({s.admissionNumber}) - Bal: {formatCurrency(s.currentFeeBalance)}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label>Reference</Label>
+                      <Label>Amount *</Label>
                       <Input
-                        value={paymentForm.reference}
-                        onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })}
-                        placeholder="Transaction ref"
+                        type="number"
+                        value={paymentForm.amount}
+                        onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
+                        placeholder="Enter amount"
                       />
                     </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Method</Label>
+                        <Select value={paymentForm.method} onValueChange={(v) => setPaymentForm({ ...paymentForm, method: v })}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cash">Cash</SelectItem>
+                            <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                            <SelectItem value="cheque">Cheque</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Reference</Label>
+                        <Input
+                          value={paymentForm.reference}
+                          onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })}
+                          placeholder="Transaction ref"
+                        />
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>Cancel</Button>
-                  <Button onClick={handleRecordPayment} disabled={paymentSubmitting} className="bg-emerald-600 hover:bg-emerald-700 text-white">
-                    {paymentSubmitting && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-                    Record Payment
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>Cancel</Button>
+                    <Button onClick={handleRecordPayment} disabled={paymentSubmitting} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                      {paymentSubmitting && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+                      Record Payment
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
           </div>
 
           <Card className="border-0 shadow-sm overflow-hidden">
@@ -546,7 +766,16 @@ export default function FeesPage() {
                           <span className="block text-xs text-gray-400 font-mono">{p.student.admissionNumber}</span>
                         </TableCell>
                         <TableCell className="font-medium text-emerald-700">{formatCurrency(p.amount)}</TableCell>
-                        <TableCell className="text-sm capitalize">{p.method}</TableCell>
+                        <TableCell className="text-sm">
+                          <Badge variant="outline" className={
+                            p.method === 'mpesa'
+                              ? 'bg-green-50 text-green-700 border-green-200'
+                              : 'bg-gray-50 text-gray-600 border-gray-200'
+                          }>
+                            {p.method === 'mpesa' && <Smartphone className="w-3 h-3 mr-1" />}
+                            {p.method.replace('_', ' ')}
+                          </Badge>
+                        </TableCell>
                         <TableCell className="font-mono text-xs">{p.reference || '-'}</TableCell>
                         <TableCell className="text-sm">{formatDate(p.transactionDate)}</TableCell>
                         <TableCell className="font-mono text-xs">{p.receiptNumber || '-'}</TableCell>
@@ -569,6 +798,191 @@ export default function FeesPage() {
                 </div>
               </div>
             )}
+          </Card>
+        </TabsContent>
+
+        {/* M-Pesa Tab */}
+        <TabsContent value="mpesa" className="space-y-4">
+          {/* M-Pesa Initiate Section */}
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
+                    <Smartphone className="w-5 h-5 text-green-700" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-base">M-Pesa STK Push</CardTitle>
+                    <CardDescription>Send a payment prompt directly to a parent/guardian&apos;s phone</CardDescription>
+                  </div>
+                </div>
+                <Dialog open={mpesaDialogOpen} onOpenChange={setMpesaDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="bg-green-600 hover:bg-green-700 text-white gap-2">
+                      <Smartphone className="w-4 h-4" />
+                      Send M-Pesa Prompt
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle className="flex items-center gap-2">
+                        <Smartphone className="w-5 h-5 text-green-600" />
+                        Send M-Pesa Payment Prompt
+                      </DialogTitle>
+                      <DialogDescription>
+                        This will send an STK Push notification to the phone number. The parent/guardian must confirm on their phone.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="space-y-2">
+                        <Label>Student *</Label>
+                        <Select value={mpesaForm.studentId} onValueChange={handleMpesaStudentChange}>
+                          <SelectTrigger><SelectValue placeholder="Select student" /></SelectTrigger>
+                          <SelectContent>
+                            {students.map((s) => (
+                              <SelectItem key={s.id} value={s.id}>
+                                {s.firstName} {s.lastName} ({s.admissionNumber})
+                                <span className="text-gray-400 ml-2">Bal: {formatCurrency(s.currentFeeBalance)}</span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {selectedStudent && (
+                          <p className="text-xs text-gray-500">
+                            Outstanding balance: <span className="font-semibold text-red-600">{formatCurrency(selectedStudent.currentFeeBalance)}</span>
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Amount (KES) *</Label>
+                        <Input
+                          type="number"
+                          value={mpesaForm.amount}
+                          onChange={(e) => setMpesaForm({ ...mpesaForm, amount: e.target.value })}
+                          placeholder="Enter amount"
+                          min="1"
+                          max="150000"
+                        />
+                        <p className="text-xs text-gray-400">Maximum KES 150,000 per transaction</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>M-Pesa Phone Number *</Label>
+                        <Input
+                          type="tel"
+                          value={mpesaForm.phoneNumber}
+                          onChange={(e) => setMpesaForm({ ...mpesaForm, phoneNumber: e.target.value })}
+                          placeholder="e.g., 0712345678"
+                        />
+                        <p className="text-xs text-gray-400">The phone number registered on M-Pesa</p>
+                      </div>
+
+                      {mpesaPollInterval && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 text-amber-600 animate-spin" />
+                          <p className="text-sm text-amber-700">
+                            Waiting for payment confirmation... The parent should check their phone.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => {
+                        setMpesaDialogOpen(false);
+                        if (mpesaPollInterval) {
+                          clearInterval(mpesaPollInterval);
+                          setMpesaPollInterval(null);
+                          mpesaPollingStudentRef.current = null;
+                        }
+                      }}>
+                        {mpesaPollInterval ? 'Stop & Close' : 'Cancel'}
+                      </Button>
+                      <Button
+                        onClick={handleMpesaInitiate}
+                        disabled={mpesaSubmitting || !!mpesaPollInterval}
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                      >
+                        {mpesaSubmitting ? (
+                          <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Sending...</>
+                        ) : mpesaPollInterval ? (
+                          <><Clock className="w-4 h-4 mr-2" /> Awaiting Confirmation</>
+                        ) : (
+                          <><Smartphone className="w-4 h-4 mr-2" /> Send Prompt</>
+                        )}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
+                <strong>How it works:</strong> Enter the student and phone number, then click &quot;Send Prompt&quot;.
+                The parent receives an M-Pesa notification on their phone to confirm payment.
+                The system automatically records the payment once confirmed.
+                You can also use &quot;Record Payment&quot; to manually log M-Pesa payments already received.
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Recent M-Pesa Transactions */}
+          <Card className="border-0 shadow-sm overflow-hidden">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-semibold">Recent M-Pesa Transactions</CardTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { if (mpesaPollingStudentRef.current) fetchMpesaTransactions(); }}
+                  className="text-xs gap-1"
+                >
+                  <RefreshCw className="w-3 h-3" /> Refresh
+                </Button>
+              </div>
+            </CardHeader>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-gray-50">
+                    <TableHead className="text-xs font-semibold">Phone</TableHead>
+                    <TableHead className="text-xs font-semibold">Amount</TableHead>
+                    <TableHead className="text-xs font-semibold">Status</TableHead>
+                    <TableHead className="text-xs font-semibold">Receipt</TableHead>
+                    <TableHead className="text-xs font-semibold">Reference</TableHead>
+                    <TableHead className="text-xs font-semibold">Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loadingMpesa ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <TableRow key={i}>
+                        {Array.from({ length: 6 }).map((_, j) => (
+                          <TableCell key={j}><Skeleton className="h-5 w-20" /></TableCell>
+                        ))}
+                      </TableRow>
+                    ))
+                  ) : mpesaTransactions.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-10">
+                        <Smartphone className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+                        <p className="text-sm text-gray-500">No M-Pesa transactions yet</p>
+                        <p className="text-xs text-gray-400 mt-1">Use &quot;Send M-Pesa Prompt&quot; to initiate a payment</p>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    mpesaTransactions.map((tx) => (
+                      <TableRow key={tx.id}>
+                        <TableCell className="font-mono text-sm">{tx.phoneNumber}</TableCell>
+                        <TableCell className="font-medium text-emerald-700">{formatCurrency(tx.amount)}</TableCell>
+                        <TableCell><MpesaStatusBadge status={tx.status} /></TableCell>
+                        <TableCell className="font-mono text-xs">{tx.mpesaReceipt || '-'}</TableCell>
+                        <TableCell className="text-xs text-gray-500">{tx.accountReference}</TableCell>
+                        <TableCell className="text-xs text-gray-500">{formatTime(tx.createdAt)}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           </Card>
         </TabsContent>
       </Tabs>

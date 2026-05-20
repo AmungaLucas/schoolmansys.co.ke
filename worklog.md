@@ -127,3 +127,53 @@ Stage Summary:
 - Invite flow: Create School -> Generate Token -> Send Email -> Accept Invite -> Set Password -> Login
 - All 12 architectural constraints maintained
 - Production deployment guide created with cron job setup
+
+---
+Task ID: 5
+Agent: Main Agent
+Task: Fix Hydration Error and Implement M-Pesa Daraja Integration
+
+Work Log:
+- Fixed hydration error on landing page (page.tsx): added suppressHydrationWarning to root div
+- Fixed hydration risk in school layout: replaced new Date().getFullYear() with static "2026"
+- Fixed accept-invite page build error: wrapped useSearchParams() in Suspense boundary
+- Updated .env with M-Pesa Daraja credentials:
+  - MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET, MPESA_PASSKEY, MPESA_SHORTCODE
+  - MPESA_PARTY_B=9393975, MPESA_CALLBACK_URL, MPESA_ENVIRONMENT=sandbox
+- Added MpesaTransaction model to Prisma schema (tracks STK Push requests)
+  - Fields: checkoutRequestId (unique), merchantRequestId, phoneNumber, amount, status, mpesaReceipt, feePaymentId
+  - Indexes on tenantId, studentId, checkoutRequestId, status
+  - Relations to Tenant and Student
+- Created M-Pesa utility library (src/lib/mpesa.ts):
+  - getOAuthToken() with token caching (50-minute TTL)
+  - initiateSTKPush() with phone normalization, amount validation, password generation
+  - parseCallback() for Daraja callback body parsing
+  - Supports sandbox and production environments
+- Created M-Pesa callback endpoint (POST /api/callbacks/mpesa):
+  - Parses Daraja callback body, matches by CheckoutRequestID
+  - On success: creates FeePayment + atomically decrements student balance (pessimistic locking)
+  - On failure/cancel: updates MpesaTransaction status
+  - Returns 200 to Daraja to prevent retries
+  - Includes GET health check endpoint
+- Created M-Pesa initiate endpoint (POST/GET /api/school/[tenantId]/fees/mpesa-initiate):
+  - POST: validates student/amount/phone, checks for duplicate pending, calls Daraja STK Push, creates MpesaTransaction record
+  - GET: polls recent M-Pesa transactions for a student (last 24h)
+- Completely rewrote fees page UI with 3 tabs:
+  - "Fee Structures" tab (unchanged)
+  - "Payments" tab with separated Record Payment (cash/bank/cheque only)
+  - "M-Pesa" tab with:
+    - Send M-Pesa Prompt dialog (student select, amount, phone number)
+    - Auto-populates amount from student balance
+    - Phone number normalization and validation
+    - 5-second polling for payment confirmation
+    - 3-minute auto-timeout
+    - Real-time status updates via toast notifications
+    - Recent M-Pesa Transactions table with status badges
+- Build passes with zero errors (next build successful)
+
+Stage Summary:
+- Full M-Pesa Daraja STK Push integration complete
+- Callback endpoint handles successful/failed/cancelled payments atomically
+- Fees page provides seamless M-Pesa flow with auto-polling
+- All architectural constraints maintained (no background workers, pessimistic locking, standard envelopes)
+- Prisma schema updated with MpesaTransaction model (needs db push on production server)
