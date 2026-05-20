@@ -1,14 +1,40 @@
 'use client'
 
+import { useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { GraduationCap, Shield, School, Wallet, BookOpen, Users, ArrowRight, CheckCircle2 } from 'lucide-react'
 
+const emptySubscribe = () => () => {}
+
+/**
+ * Returns false during SSR and true on the client.
+ * Uses useSyncExternalStore to avoid hydration mismatches
+ * caused by browser extensions injecting DOM elements.
+ */
+function useHydrated() {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  )
+}
+
 export default function Home() {
+  const hydrated = useHydrated()
+
+  // Render a minimal shell on the server to avoid hydration mismatches
+  // from browser extensions injecting DOM elements
+  if (!hydrated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50" />
+    )
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50" suppressHydrationWarning>
+    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50">
       {/* Header */}
       <header className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -198,7 +224,7 @@ export default function Home() {
             <div className="flex items-center gap-4">
               <span>Built for Kenyan CBC/CBE</span>
               <span className="hidden sm:inline">|</span>
-              <span className="hidden sm:inline">Next.js + Prisma + SQLite</span>
+              <span className="hidden sm:inline">Next.js + Prisma + MySQL</span>
             </div>
           </div>
         </div>
