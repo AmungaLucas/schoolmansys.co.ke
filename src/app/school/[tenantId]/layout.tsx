@@ -221,6 +221,9 @@ export default function SchoolLayout({ children }: { children: ReactNode }) {
       return;
     }
 
+    // Re-enter loading state when navigating away from login
+    setLoading(true);
+
     async function fetchUser() {
       try {
         const res = await fetch('/api/auth/school/me');

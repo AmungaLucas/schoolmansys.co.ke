@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { compare } from "bcryptjs";
 import { db } from "@/lib/db";
-import { createSchoolSession } from "@/lib/auth";
+import { buildSchoolToken, SCHOOL_COOKIE, isSecureCookie } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
@@ -71,9 +71,9 @@ export async function POST(request: NextRequest) {
       data: { lastLoginAt: new Date() },
     });
 
-    await createSchoolSession(user.id, tenantId, user.name, user.email, user.roleId);
-
-    return NextResponse.json({
+    // Build session token and set cookie directly on the response object
+    const token = buildSchoolToken(user.id, tenantId, user.name, user.email, user.roleId);
+    const response = NextResponse.json({
       success: true,
       data: {
         id: user.id,
@@ -84,6 +84,16 @@ export async function POST(request: NextRequest) {
         role: user.role ? { id: user.role.id, name: user.role.name, permissions: user.role.permissions } : null,
       },
     });
+
+    response.cookies.set(SCHOOL_COOKIE, token, {
+      httpOnly: true,
+      secure: isSecureCookie(request),
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24, // 24 hours
+    });
+
+    return response;
   } catch (error) {
     console.error("School login error:", error);
     return NextResponse.json(

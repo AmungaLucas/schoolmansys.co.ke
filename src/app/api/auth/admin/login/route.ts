@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { compare } from "bcryptjs";
 import { db } from "@/lib/db";
-import { createAdminSession } from "@/lib/auth";
+import { buildAdminToken, ADMIN_COOKIE, isSecureCookie } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
@@ -42,9 +42,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await createAdminSession(user.id, user.name, user.email, user.role);
-
-    return NextResponse.json({
+    // Build session token and set cookie directly on the response object
+    const token = buildAdminToken(user.id, user.name, user.email, user.role);
+    const response = NextResponse.json({
       success: true,
       data: {
         id: user.id,
@@ -53,10 +53,19 @@ export async function POST(request: NextRequest) {
         role: user.role,
       },
     });
+
+    response.cookies.set(ADMIN_COOKIE, token, {
+      httpOnly: true,
+      secure: isSecureCookie(request),
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24, // 24 hours
+    });
+
+    return response;
   } catch (error: unknown) {
     console.error("Admin login error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
-    // TEMP: Show actual error for debugging (remove after DB connectivity confirmed)
     return NextResponse.json(
       { success: false, error: { code: "INTERNAL_ERROR", message } },
       { status: 500 }

@@ -128,6 +128,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       return;
     }
 
+    // Re-enter loading state when navigating away from login
+    setLoading(true);
+
     const checkAuth = async () => {
       try {
         const res = await fetch('/api/auth/admin/me');

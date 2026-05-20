@@ -1,13 +1,22 @@
-import { NextResponse } from "next/server";
-import { deleteSchoolSession } from "@/lib/auth";
+import { NextRequest, NextResponse } from "next/server";
+import { SCHOOL_COOKIE, isSecureCookie } from "@/lib/auth";
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    await deleteSchoolSession();
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       data: { message: "Logged out successfully" },
     });
+
+    response.cookies.set(SCHOOL_COOKIE, "", {
+      httpOnly: true,
+      secure: isSecureCookie(request),
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+
+    return response;
   } catch (error) {
     console.error("School logout error:", error);
     return NextResponse.json(

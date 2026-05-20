@@ -19,13 +19,30 @@ export interface SchoolSession {
 
 export type SessionData = AdminSession | SchoolSession;
 
-const ADMIN_COOKIE = "admin_session";
-const SCHOOL_COOKIE = "school_session";
+export const ADMIN_COOKIE = "admin_session";
+export const SCHOOL_COOKIE = "school_session";
 
-function encodeSession(data: SessionData): string {
+/**
+ * Determine if cookies should be set with the Secure flag.
+ * In production behind a proxy (Caddy/Vercel), x-forwarded-proto is "https"
+ * even though the app listens on plain HTTP.
+ * Falls back to checking NODE_ENV === "production" if the header is missing.
+ */
+export function isSecureCookie(request?: { headers: { get(name: string): string | null } }): boolean {
+  if (request) {
+    const proto = request.headers.get("x-forwarded-proto");
+    if (proto === "http") return false;
+    if (proto === "https") return true;
+  }
+  return process.env.NODE_ENV === "production";
+}
+
+/** Encode session payload to a base64url token (no cookie side-effect). */
+export function encodeSession(data: SessionData): string {
   return Buffer.from(JSON.stringify(data)).toString("base64url");
 }
 
+/** Decode a base64url token back to session payload. */
 function decodeSession(token: string): SessionData | null {
   try {
     const decoded = Buffer.from(token, "base64url").toString("utf-8");
@@ -35,58 +52,30 @@ function decodeSession(token: string): SessionData | null {
   }
 }
 
-export async function createAdminSession(
+/** Build an admin session token (no cookie side-effect). */
+export function buildAdminToken(
   userId: string,
   name: string,
   email: string,
   role: string
-): Promise<string> {
-  const session: AdminSession = {
-    userId,
-    userType: "admin",
-    name,
-    email,
-    role,
-  };
-  const token = encodeSession(session);
-  const cookieStore = await cookies();
-  cookieStore.set(ADMIN_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24, // 24 hours
-  });
-  return token;
+): string {
+  const session: AdminSession = { userId, userType: "admin", name, email, role };
+  return encodeSession(session);
 }
 
-export async function createSchoolSession(
+/** Build a school session token (no cookie side-effect). */
+export function buildSchoolToken(
   userId: string,
   tenantId: string,
   name: string,
   email: string,
   roleId: string | null
-): Promise<string> {
-  const session: SchoolSession = {
-    userId,
-    userType: "school",
-    tenantId,
-    name,
-    email,
-    roleId,
-  };
-  const token = encodeSession(session);
-  const cookieStore = await cookies();
-  cookieStore.set(SCHOOL_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24,
-  });
-  return token;
+): string {
+  const session: SchoolSession = { userId, userType: "school", tenantId, name, email, roleId };
+  return encodeSession(session);
 }
 
+/** Read and verify the admin session cookie. Server-side only. */
 export async function verifyAdminSession(): Promise<AdminSession | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(ADMIN_COOKIE)?.value;
@@ -94,19 +83,10 @@ export async function verifyAdminSession(): Promise<AdminSession | null> {
   return decodeSession(token) as AdminSession | null;
 }
 
+/** Read and verify the school session cookie. Server-side only. */
 export async function verifySchoolSession(): Promise<SchoolSession | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SCHOOL_COOKIE)?.value;
   if (!token) return null;
   return decodeSession(token) as SchoolSession | null;
-}
-
-export async function deleteAdminSession(): Promise<void> {
-  const cookieStore = await cookies();
-  cookieStore.delete(ADMIN_COOKIE);
-}
-
-export async function deleteSchoolSession(): Promise<void> {
-  const cookieStore = await cookies();
-  cookieStore.delete(SCHOOL_COOKIE);
 }
