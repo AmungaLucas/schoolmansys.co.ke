@@ -18,6 +18,7 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -291,17 +292,31 @@ export default function SchoolsPage() {
     if (!confirmAction) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`/api/admin/schools/${confirmAction.schoolId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: confirmAction.action }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        toast.error(json.error?.message || 'Action failed');
-        return;
+      if (confirmAction.action === 'delete') {
+        // Permanent deletion — uses DELETE endpoint
+        const res = await fetch(`/api/admin/schools/${confirmAction.schoolId}`, {
+          method: 'DELETE',
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) {
+          toast.error(json.error?.message || 'Delete failed');
+          return;
+        }
+        toast.success(`School "${confirmAction.schoolName}" permanently deleted`);
+      } else {
+        // Status change — uses PATCH endpoint
+        const res = await fetch(`/api/admin/schools/${confirmAction.schoolId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: confirmAction.action }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) {
+          toast.error(json.error?.message || 'Action failed');
+          return;
+        }
+        toast.success(`School ${confirmAction.action === 'active' ? 'activated' : confirmAction.action} successfully`);
       }
-      toast.success(`School ${confirmAction.action === 'active' ? 'activated' : confirmAction.action} successfully`);
       setConfirmAction(null);
       fetchSchools();
     } catch {
@@ -652,7 +667,7 @@ export default function SchoolsPage() {
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
-                              onClick={() => handleDeleteSchool(school)}
+                              onClick={() => setConfirmAction({ schoolId: school.id, schoolName: school.name, action: 'delete' })}
                               className="text-red-600 focus:text-red-600"
                             >
                               <Trash2 className="w-4 h-4 mr-2" />
@@ -703,10 +718,22 @@ export default function SchoolsPage() {
       <Dialog open={!!confirmAction} onOpenChange={() => setConfirmAction(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Confirm Action</DialogTitle>
+            <DialogTitle>
+              {confirmAction?.action === 'delete' ? 'Delete School Permanently' : 'Confirm Action'}
+            </DialogTitle>
             <DialogDescription>
-              Are you sure you want to {confirmAction?.action === 'active' ? 'activate' : confirmAction?.action}{' '}
-              <strong>{confirmAction?.schoolName}</strong>?
+              {confirmAction?.action === 'delete' ? (
+                <>
+                  This will <strong>permanently delete</strong> <strong>{confirmAction?.schoolName}</strong> and{' '}
+                  <span className="text-red-600 font-medium">ALL its data</span> including students, staff, classes, grades,{' '}
+                  attendance records, and payments. This action <strong>cannot be undone</strong>.
+                </>
+              ) : (
+                <>
+                  Are you sure you want to {confirmAction?.action === 'active' ? 'activate' : confirmAction?.action}{' '}
+                  <strong>{confirmAction?.schoolName}</strong>?
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -720,7 +747,9 @@ export default function SchoolsPage() {
               disabled={actionLoading}
             >
               {actionLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {confirmAction?.action === 'active' ? 'Activate' : confirmAction?.action === 'suspended' ? 'Suspend' : 'Archive'}
+              {confirmAction?.action === 'delete' ? 'Delete Permanently' :
+               confirmAction?.action === 'active' ? 'Activate' :
+               confirmAction?.action === 'suspended' ? 'Suspend' : 'Archive'}
             </Button>
           </DialogFooter>
         </DialogContent>
