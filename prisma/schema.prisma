@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider     = "mysql"
+  url          = env("DATABASE_URL")
+  relationMode = "foreignKeys"
 }
 
 // ============================================================================
@@ -69,7 +70,7 @@ model Plan {
   durationDays Int      @default(365)
   maxStudents  Int      @default(100)
   maxStaff     Int      @default(20)
-  features     String   @default("{}")
+  features     String   @default("{}") @db.Text
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -100,7 +101,7 @@ model AuditLog {
   action     String
   entityType String?
   entityId   String?
-  details    String   @default("{}")
+  details    String   @default("{}") @db.Text
   actorId    String?
   actorType  String   @default("global_user")
   ipAddress  String?
@@ -145,7 +146,7 @@ model Role {
   tenantId    String
   name        String
   description String?
-  permissions String   @default("{}")
+  permissions String   @default("{}") @db.Text
   isDefault   Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -438,7 +439,7 @@ model FeeStructure {
   termId         String?
   classId        String?
   totalAmount    Float    @default(0)
-  breakdown      String   @default("{}")
+  breakdown      String   @default("{}") @db.Text
   status         String   @default("active")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -605,7 +606,7 @@ model MessageQueue {
   id         String   @id @default(cuid())
   tenantId   String
   recipient  String
-  message    String
+  message    String   @db.Text
   status     String   @default("pending")
   sentAt     DateTime?
   createdAt  DateTime @default(now())

@@ -85,3 +85,45 @@ Stage Summary:
 - UPI validation (10-12 numeric chars) on student creation
 - Fee recording with atomic balance updates
 - Bulk attendance with color-coded status badges
+
+---
+Task ID: 4
+Agent: Main Agent
+Task: Production Database & Email Integration
+
+Work Log:
+- Updated .env with production MySQL credentials (da30.host-ww.net / schoolm2_mansys_db)
+- Switched Prisma schema from SQLite to MySQL provider with foreignKeys relation mode
+- Added @db.Text annotations for JSON string fields (features, permissions, breakdown, details, message)
+- Installed nodemailer and @types/nodemailer packages
+- Created comprehensive email utility (src/lib/email.ts) with:
+  - sendEmail() with 5-second Promise.race timeout (Constraint #4)
+  - sendInviteEmail() with professional HTML template and Copy Link support (Constraint #8)
+  - sendPasswordResetEmail() with warning banner
+  - verifySmtp() for connection testing
+  - Connection pooling configured for shared hosting
+- Updated school creation API (POST /api/admin/schools) to:
+  - Generate invite tokens (crypto.randomBytes)
+  - Create users with status "invited" and inviteExpiry (7 days)
+  - Seed academic year, terms (Kenyan 3-term system), CBC learning levels
+  - Send invite email with 5-second timeout and graceful fallback (returns warnings array)
+  - Return inviteLink in response for WhatsApp sharing (Constraint #8)
+  - Status transitions: provisioning -> active (or provisioning_failed)
+- Created accept-invite API (GET/POST /api/accept-invite):
+  - Token validation with expiry check
+  - Password strength validation (8+ chars, upper, lower, number)
+  - bcryptjs hashing (Constraint #3)
+  - Tenant activation check
+- Created accept-invite page (/accept-invite/page.tsx):
+  - Token validation on load
+  - Password setup form with real-time strength indicator
+  - Success screen with link to school login
+- Created DEPLOYMENT.md with production deployment guide
+- Updated db.ts to use error-level logging in production
+
+Stage Summary:
+- MySQL schema validated and Prisma client generates successfully
+- Email system fully integrated with 5-second timeout and graceful fallback
+- Invite flow: Create School -> Generate Token -> Send Email -> Accept Invite -> Set Password -> Login
+- All 12 architectural constraints maintained
+- Production deployment guide created with cron job setup
