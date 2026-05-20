@@ -44,7 +44,7 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen flex" suppressHydrationWarning>
       {/* Left panel - branding */}
       <div className="hidden lg:flex lg:w-1/2 bg-emerald-700 text-white flex-col justify-between p-12">
         <div className="flex items-center gap-3">
@@ -80,7 +80,7 @@ export default function AdminLoginPage() {
         </div>
 
         <p className="text-emerald-300 text-sm">
-          &copy; {new Date().getFullYear()} SchoolManSys. All rights reserved.
+          &copy; 2026 SchoolManSys. All rights reserved.
         </p>
       </div>
 

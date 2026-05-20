@@ -28,9 +28,19 @@ export async function POST(request: NextRequest) {
       `ResultCode: ${parsed.resultCode}, ResultDesc: ${parsed.resultDesc}`
     );
 
+    // Defensive: check that the MpesaTransaction model is available
+    // (If prisma db push hasn't been run, the table won't exist)
+    if (!db.mpesaTransaction) {
+      console.error('[M-Pesa Callback] MpesaTransaction model not available. Run "prisma db push" to create the table.');
+      return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted (table not ready)" });
+    }
+
     // Look up the pending transaction
     const mpesaTx = await db.mpesaTransaction.findUnique({
       where: { checkoutRequestId: parsed.checkoutRequestId },
+    }).catch((err: unknown) => {
+      console.error('[M-Pesa Callback] Error finding transaction:', err);
+      return null;
     });
 
     if (!mpesaTx) {

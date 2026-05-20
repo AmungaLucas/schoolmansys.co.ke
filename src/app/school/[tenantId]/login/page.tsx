@@ -51,7 +51,7 @@ export default function SchoolLoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 p-4" suppressHydrationWarning>
       <div className="w-full max-w-md">
         {/* School branding */}
         <div className="text-center mb-8">
@@ -145,7 +145,7 @@ export default function SchoolLoginPage() {
         </Card>
 
         <p className="text-center text-xs text-gray-400 mt-6">
-          &copy; {new Date().getFullYear()} SchoolManSys. School Management System.
+          &copy; 2026 SchoolManSys. School Management System.
         </p>
       </div>
     </div>

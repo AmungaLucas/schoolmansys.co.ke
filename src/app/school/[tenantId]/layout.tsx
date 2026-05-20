@@ -276,7 +276,7 @@ export default function SchoolLayout({ children }: { children: ReactNode }) {
 
   return (
     <SchoolContext.Provider value={{ user, tenantId, loading }}>
-      <div className="min-h-screen flex bg-gray-50">
+      <div className="min-h-screen flex bg-gray-50" suppressHydrationWarning>
         {/* Desktop sidebar */}
         <aside
           className={cn(

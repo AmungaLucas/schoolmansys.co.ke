@@ -12,7 +12,6 @@ import {
   LogOut,
   GraduationCap,
   Menu,
-  X,
   ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -119,7 +118,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [loading, setLoading] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  // Login page renders without the chrome (sidebar, header, auth guard)
+  const isLoginPage = pathname === '/admin/login';
+
   useEffect(() => {
+    // Skip auth check on login page
+    if (isLoginPage) {
+      setLoading(false);
+      return;
+    }
+
     const checkAuth = async () => {
       try {
         const res = await fetch('/api/auth/admin/me');
@@ -136,11 +144,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       }
     };
     checkAuth();
-  }, [router]);
+  }, [router, isLoginPage]);
+
+  // Login page renders without chrome — just the children
+  if (isLoginPage) {
+    return <>{children}</>;
+  }
 
   if (loading) {
     return (
-      <div className="min-h-screen flex">
+      <div className="min-h-screen flex" suppressHydrationWarning>
         <div className="hidden lg:flex w-64 bg-emerald-800 flex-col p-4 gap-4">
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-8 w-full" />
@@ -159,7 +172,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   if (!admin) return null;
 
   return (
-    <div className="min-h-screen flex bg-muted/30">
+    <div className="min-h-screen flex bg-muted/30" suppressHydrationWarning>
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-64 bg-emerald-800 flex-col flex-shrink-0">
         <SidebarContent admin={admin} pathname={pathname} />

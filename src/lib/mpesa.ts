@@ -151,7 +151,7 @@ export async function initiateSTKPush(request: STKPushRequest): Promise<STKPushR
       BusinessShortCode: shortcode,
       Password: password,
       Timestamp: timestamp,
-      TransactionType: 'CustomerPayBillOnline',
+      TransactionType: 'CustomerBuyGoodsOnline',
       Amount: Math.round(request.amount),
       PartyA: phone,
       PartyB: partyB,
