@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireSchoolUser } from "@/lib/auth-guard";
-import { Prisma } from "@prisma/client";
 
 export async function GET(
   request: NextRequest,
@@ -28,9 +27,8 @@ export async function GET(
       );
     }
 
-    const date = new Date(dateStr);
-    date.setHours(0, 0, 0, 0);
-
+    // Use UTC to be consistent with the bulk-save endpoint
+    const date = new Date(dateStr + "T00:00:00.000Z");
     const nextDay = new Date(date);
     nextDay.setDate(nextDay.getDate() + 1);
 
@@ -48,11 +46,14 @@ export async function GET(
       orderBy: { admissionNumber: "asc" },
     });
 
-    // Get attendance records for this class/date
+    // Query attendance by studentIds + date range.
+    // Do NOT filter by classId here because the @@unique constraint on
+    // Attendance is [tenantId, studentId, date] — a student can only have
+    // one record per date regardless of class.
     const attendanceRecords = await db.attendance.findMany({
       where: {
         tenantId,
-        classId,
+        studentId: { in: studentIds },
         date: { gte: date, lt: nextDay },
       },
       select: { studentId: true, status: true, remarks: true },

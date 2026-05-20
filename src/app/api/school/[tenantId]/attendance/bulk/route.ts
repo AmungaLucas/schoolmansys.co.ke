@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireSchoolUser } from "@/lib/auth-guard";
+import { Prisma } from "@prisma/client";
 
 export async function POST(
   request: NextRequest,
@@ -26,53 +27,73 @@ export async function POST(
       );
     }
 
-    const attendanceDate = new Date(date);
-    attendanceDate.setHours(0, 0, 0, 0);
+    if (records.length === 0) {
+      return NextResponse.json(
+        { success: false, error: { code: "VALIDATION_ERROR", message: "No records provided" } },
+        { status: 400 }
+      );
+    }
 
+    const attendanceDate = new Date(date + "T00:00:00.000Z");
     const validStatuses = ["present", "absent", "late", "excused"];
 
+    // Validate all records before starting the transaction
+    for (const record of records) {
+      if (!record.studentId || !record.status || !validStatuses.includes(record.status)) {
+        return NextResponse.json(
+          { success: false, error: { code: "VALIDATION_ERROR", message: `Invalid record: ${JSON.stringify(record)}` } },
+          { status: 400 }
+        );
+      }
+    }
+
     const result = await db.$transaction(async (tx) => {
-      const created = [];
-      const updated = [];
+      let createdCount = 0;
+      let updatedCount = 0;
 
       for (const record of records) {
         const { studentId, status, remarks } = record;
 
-        if (!studentId || !status || !validStatuses.includes(status)) continue;
-
-        // Check if record already exists
-        const existing = await tx.attendance.findFirst({
+        // Use upsert keyed on the @@unique([tenantId, studentId, date]) constraint.
+        // Previously we used findFirst with classId in the WHERE, which missed
+        // existing records saved under a different classId and caused unique
+        // constraint violations on create.
+        const upserted = await tx.attendance.upsert({
           where: {
+            tenantId_studentId_date: {
+              tenantId,
+              studentId,
+              date: attendanceDate,
+            },
+          },
+          update: {
+            status,
+            classId,
+            remarks: remarks || null,
+            markedBy: user.userId,
+          },
+          create: {
             tenantId,
             studentId,
             classId,
             date: attendanceDate,
+            status,
+            remarks: remarks || null,
+            markedBy: user.userId,
           },
         });
 
-        if (existing) {
-          await tx.attendance.update({
-            where: { id: existing.id },
-            data: { status, remarks: remarks || null },
-          });
-          updated.push(existing.id);
+        // If the record was created in the last 2 seconds, count it as new;
+        // otherwise it was an update of an existing row.
+        const ageMs = Date.now() - upserted.createdAt.getTime();
+        if (ageMs < 2000) {
+          createdCount++;
         } else {
-          const newRecord = await tx.attendance.create({
-            data: {
-              tenantId,
-              studentId,
-              classId,
-              date: attendanceDate,
-              status,
-              remarks: remarks || null,
-              markedBy: user.userId,
-            },
-          });
-          created.push(newRecord.id);
+          updatedCount++;
         }
       }
 
-      return { createdCount: created.length, updatedCount: updated.length };
+      return { createdCount, updatedCount };
     });
 
     return NextResponse.json({
@@ -84,8 +105,15 @@ export async function POST(
     });
   } catch (error) {
     console.error("Bulk attendance error:", error);
+
+    // Return the actual error message in development for easier debugging
+    const message =
+      process.env.NODE_ENV === "development" && error instanceof Error
+        ? error.message
+        : "An unexpected error occurred";
+
     return NextResponse.json(
-      { success: false, error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } },
+      { success: false, error: { code: "INTERNAL_ERROR", message } },
       { status: 500 }
     );
   }
