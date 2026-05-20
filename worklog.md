@@ -272,3 +272,22 @@ Stage Summary:
 - Vercel project: https://vercel.com/amungas-projects/schoolmansys
 - Live URL: https://schoolmansys.vercel.app
 - All 17 env vars set and deployment confirmed READY
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix login redirect loop — user redirected back to login after successful login
+
+Work Log:
+- Investigated all auth-related files (auth.ts, login routes, logout routes, layouts, /me endpoints)
+- Found 3 bugs causing the redirect loop
+- Fixed auth.ts: Refactored to export pure functions (buildAdminToken, buildSchoolToken, isSecureCookie, encodeSession) without cookie side-effects
+- Fixed admin/school login routes: Set cookies via response.cookies.set() on NextResponse object instead of cookies().set()
+- Fixed admin/school logout routes: Clear cookies via response.cookies.set() with maxAge:0
+- Fixed admin/school layouts: Added setLoading(true) before auth check to prevent blank flash
+- Built successfully, pushed to GitHub
+
+Stage Summary:
+- Root cause: cookies().set() in Next.js 16 Route Handlers does not propagate to NextResponse.json()
+- Secondary: secure:true flag rejected cookies over HTTP behind Caddy reverse proxy
+- Fix verified: /me endpoint now correctly reads cookies (tested with manual cookie injection)
+- Committed as 9efe424, pushed to main branch
