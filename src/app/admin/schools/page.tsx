@@ -200,13 +200,10 @@ export default function SchoolsPage() {
     }
     setCheckingSubdomain(true);
     try {
-      const res = await fetch(`/api/admin/schools?search=${encodeURIComponent(subdomain)}&limit=1`);
+      const res = await fetch(`/api/admin/schools/check-subdomain?subdomain=${encodeURIComponent(subdomain)}`);
       const json = await res.json();
       if (json.success) {
-        const exists = json.data.schools.some(
-          (s: School) => s.subdomain.toLowerCase() === subdomain.toLowerCase()
-        );
-        setSubdomainAvailable(!exists);
+        setSubdomainAvailable(json.data.available);
       }
     } catch {
       // Ignore errors for subdomain check

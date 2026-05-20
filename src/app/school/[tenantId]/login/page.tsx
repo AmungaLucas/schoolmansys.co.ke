@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { GraduationCap, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -14,10 +14,27 @@ export default function SchoolLoginPage() {
   const router = useRouter();
   const tenantId = params.tenantId as string;
 
+  const [tenantName, setTenantName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Fetch tenant name on mount
+  useEffect(() => {
+    async function fetchTenant() {
+      try {
+        const res = await fetch(`/api/auth/school/tenant-info?tenantId=${encodeURIComponent(tenantId)}`);
+        const json = await res.json();
+        if (json.success && json.data?.name) {
+          setTenantName(json.data.name);
+        }
+      } catch {
+        // Fallback to generic text
+      }
+    }
+    fetchTenant();
+  }, [tenantId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,7 +77,7 @@ export default function SchoolLoginPage() {
           </div>
           <h1 className="text-2xl font-bold text-gray-900">SchoolManSys</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {tenantId === 'tenant_greenfield' ? 'Greenfield Academy' : `School Portal`}
+            {tenantName || 'School Portal'}
           </p>
         </div>
 

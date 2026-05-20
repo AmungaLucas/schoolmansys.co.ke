@@ -120,9 +120,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check email uniqueness
+    // Check email uniqueness (only active users — soft-deleted should not block reuse)
     const existingUser = await db.user.findFirst({
-      where: { email: adminEmail.toLowerCase().trim() },
+      where: { email: adminEmail.toLowerCase().trim(), deletedAt: null },
     });
     if (existingUser) {
       return NextResponse.json(
