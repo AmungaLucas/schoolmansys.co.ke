@@ -90,6 +90,7 @@ export async function POST(request: NextRequest) {
         email: updatedUser.email,
         name: updatedUser.name,
         tenantName: user.tenant.name,
+        tenantId: user.tenant.id,
         tenantSubdomain: user.tenant.subdomain,
         role: user.role?.name,
       },
@@ -142,6 +143,7 @@ export async function GET(request: NextRequest) {
         schoolName: user.tenant.name,
         adminName: user.name,
         email: user.email,
+        tenantId: user.tenant.id,
         subdomain: user.tenant.subdomain,
       },
     });

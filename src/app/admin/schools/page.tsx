@@ -15,6 +15,9 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
+  Copy,
+  Check,
+  ExternalLink,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -81,7 +84,17 @@ interface CreateSchoolForm {
   subdomain: string;
   adminName: string;
   adminEmail: string;
-  adminPassword: string;
+  planId: string;
+}
+
+interface CreatedSchoolResult {
+  id: string;
+  name: string;
+  subdomain: string;
+  status: string;
+  adminEmail: string;
+  inviteToken: string;
+  inviteLink: string;
 }
 
 const statusVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -105,6 +118,7 @@ const statusLabel: Record<string, string> = {
 export default function SchoolsPage() {
   const router = useRouter();
   const [schools, setSchools] = useState<School[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [totalPages, setTotalPages] = useState(1);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -118,11 +132,16 @@ export default function SchoolsPage() {
     subdomain: '',
     adminName: '',
     adminEmail: '',
-    adminPassword: '',
+    planId: '',
   });
   const [createLoading, setCreateLoading] = useState(false);
   const [checkingSubdomain, setCheckingSubdomain] = useState(false);
   const [subdomainAvailable, setSubdomainAvailable] = useState<boolean | null>(null);
+
+  // Invite link dialog (shown after creation)
+  const [createdSchool, setCreatedSchool] = useState<CreatedSchoolResult | null>(null);
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
+  const [tokenCopied, setTokenCopied] = useState(false);
 
   // Action confirmations
   const [confirmAction, setConfirmAction] = useState<{
@@ -131,6 +150,16 @@ export default function SchoolsPage() {
     action: string;
   } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchPlans = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/plans');
+      const json = await res.json();
+      if (json.success) setPlans(json.data || []);
+    } catch {
+      // Ignore — plan selection is optional
+    }
+  }, []);
 
   const fetchSchools = useCallback(async () => {
     setLoading(true);
@@ -157,17 +186,20 @@ export default function SchoolsPage() {
   }, [page, search, statusFilter]);
 
   useEffect(() => {
+    fetchPlans();
+  }, [fetchPlans]);
+
+  useEffect(() => {
     fetchSchools();
   }, [fetchSchools]);
 
-  const checkSubdomain = async (subdomain: string) => {
+  const checkSubdomain = useCallback(async (subdomain: string) => {
     if (!subdomain || subdomain.length < 3) {
       setSubdomainAvailable(null);
       return;
     }
     setCheckingSubdomain(true);
     try {
-      // We search for the subdomain to check availability
       const res = await fetch(`/api/admin/schools?search=${encodeURIComponent(subdomain)}&limit=1`);
       const json = await res.json();
       if (json.success) {
@@ -181,7 +213,7 @@ export default function SchoolsPage() {
     } finally {
       setCheckingSubdomain(false);
     }
-  };
+  }, []);
 
   const handleSubdomainChange = (value: string) => {
     const clean = value.toLowerCase().replace(/[^a-z0-9-]/g, '');
@@ -190,7 +222,7 @@ export default function SchoolsPage() {
   };
 
   const handleCreateSchool = async () => {
-    if (!createForm.name || !createForm.subdomain || !createForm.adminName || !createForm.adminEmail || !createForm.adminPassword) {
+    if (!createForm.name || !createForm.subdomain || !createForm.adminName || !createForm.adminEmail) {
       toast.error('Please fill in all required fields');
       return;
     }
@@ -204,22 +236,57 @@ export default function SchoolsPage() {
       const res = await fetch('/api/admin/schools', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(createForm),
+        body: JSON.stringify({
+          name: createForm.name,
+          subdomain: createForm.subdomain,
+          adminName: createForm.adminName,
+          adminEmail: createForm.adminEmail,
+          planId: createForm.planId || null,
+        }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) {
         toast.error(json.error?.message || 'Failed to create school');
         return;
       }
-      toast.success(`School "${createForm.name}" created successfully!`);
+
+      // Close create dialog and show invite link dialog
       setCreateOpen(false);
-      setCreateForm({ name: '', subdomain: '', adminName: '', adminEmail: '', adminPassword: '' });
+      setCreatedSchool(json.data);
+
+      if (json.warnings && json.warnings.length > 0) {
+        toast.warning('School created but email failed. Share the invite link manually.', {
+          description: json.warnings.join(', '),
+          duration: 8000,
+        });
+      } else {
+        toast.success(`School "${createForm.name}" created successfully!`);
+      }
+
+      // Reset form
+      setCreateForm({ name: '', subdomain: '', adminName: '', adminEmail: '', planId: '' });
       setSubdomainAvailable(null);
       fetchSchools();
     } catch {
       toast.error('Network error');
     } finally {
       setCreateLoading(false);
+    }
+  };
+
+  const copyToClipboard = async (text: string, type: 'link' | 'token') => {
+    try {
+      await navigator.clipboard.writeText(text);
+      if (type === 'link') {
+        setInviteLinkCopied(true);
+        setTimeout(() => setInviteLinkCopied(false), 2000);
+      } else {
+        setTokenCopied(true);
+        setTimeout(() => setTokenCopied(false), 2000);
+      }
+      toast.success('Copied to clipboard');
+    } catch {
+      toast.error('Failed to copy');
     }
   };
 
@@ -275,7 +342,7 @@ export default function SchoolsPage() {
             <DialogHeader>
               <DialogTitle>Create New School</DialogTitle>
               <DialogDescription>
-                Set up a new school tenant. An admin account will be created automatically.
+                Set up a new school tenant. An invite link will be generated for the admin to set their password.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
@@ -313,6 +380,25 @@ export default function SchoolsPage() {
                 </div>
               </div>
               <div className="grid gap-2">
+                <Label htmlFor="plan">Subscription Plan</Label>
+                <Select
+                  value={createForm.planId}
+                  onValueChange={(v) => setCreateForm((p) => ({ ...p, planId: v === '__none__' ? '' : v }))}
+                >
+                  <SelectTrigger id="plan">
+                    <SelectValue placeholder="Select a plan (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No plan (30-day trial)</SelectItem>
+                    {plans.map((plan) => (
+                      <SelectItem key={plan.id} value={plan.id}>
+                        {plan.name} — KES {plan.price.toLocaleString()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
                 <Label htmlFor="admin-name">Admin Full Name *</Label>
                 <Input
                   id="admin-name"
@@ -331,15 +417,8 @@ export default function SchoolsPage() {
                   onChange={(e) => setCreateForm((p) => ({ ...p, adminEmail: e.target.value }))}
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="admin-password">Admin Password *</Label>
-                <Input
-                  id="admin-password"
-                  type="password"
-                  placeholder="Minimum 6 characters"
-                  value={createForm.adminPassword}
-                  onChange={(e) => setCreateForm((p) => ({ ...p, adminPassword: e.target.value }))}
-                />
+              <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-sm text-amber-800">
+                An invite link will be generated after creation. The admin will use this link to set their password (requires uppercase, lowercase, digit, 8+ characters).
               </div>
             </div>
             <DialogFooter>
@@ -364,6 +443,83 @@ export default function SchoolsPage() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* Invite Link Dialog (shown after creation) */}
+      <Dialog open={!!createdSchool} onOpenChange={(open) => { if (!open) setCreatedSchool(null); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+              School Created Successfully
+            </DialogTitle>
+            <DialogDescription>
+              Share the invite link below with <strong>{createdSchool?.adminEmail}</strong> so they can set their password and access the portal.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {/* Invite Link */}
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Invite Link (share via email/WhatsApp)</Label>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs bg-muted p-3 rounded-md break-all select-all leading-relaxed">
+                  {createdSchool?.inviteLink}
+                </code>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => copyToClipboard(createdSchool?.inviteLink || '', 'link')}
+                >
+                  {inviteLinkCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+
+            {/* Invite Token */}
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Invite Token (for manual use)</Label>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs bg-muted p-3 rounded-md font-mono select-all">
+                  {createdSchool?.inviteToken}
+                </code>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => copyToClipboard(createdSchool?.inviteToken || '', 'token')}
+                >
+                  {tokenCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+
+            {/* School details summary */}
+            <div className="bg-emerald-50 border border-emerald-200 rounded-md p-3 text-sm space-y-1">
+              <p><strong>School:</strong> {createdSchool?.name}</p>
+              <p><strong>Subdomain:</strong> {createdSchool?.subdomain}.schoolmansys.co.ke</p>
+              <p><strong>Status:</strong> <Badge variant={statusVariant[createdSchool?.status || ''] || 'outline'}>{statusLabel[createdSchool?.status || ''] || createdSchool?.status}</Badge></p>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              This link expires in 7 days. You can resend it from the school detail page.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreatedSchool(null)}>
+              Close
+            </Button>
+            <Button
+              variant="outline"
+              asChild
+            >
+              <Link href={`/admin/schools/${createdSchool?.id}`}>
+                <ExternalLink className="w-4 h-4 mr-1" />
+                View School Details
+              </Link>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Filters */}
       <Card>

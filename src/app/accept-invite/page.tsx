@@ -17,7 +17,7 @@ function AcceptInviteContent() {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [error, setError] = useState('')
-  const [schoolInfo, setSchoolInfo] = useState<{ schoolName: string; adminName: string; email: string; subdomain: string } | null>(null)
+  const [schoolInfo, setSchoolInfo] = useState<{ schoolName: string; adminName: string; email: string; tenantId: string; subdomain: string } | null>(null)
   const [success, setSuccess] = useState(false)
 
   const [password, setPassword] = useState('')
@@ -127,7 +127,7 @@ function AcceptInviteContent() {
             <p className="text-sm text-gray-600 mb-4">
               You can now log in to your school portal.
             </p>
-            <Link href={`/school/${schoolInfo?.subdomain}/login`}>
+            <Link href={`/school/${schoolInfo?.tenantId}/login`}>
               <Button className="bg-emerald-600 hover:bg-emerald-700 w-full">
                 Go to Login
               </Button>
