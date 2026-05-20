@@ -56,8 +56,9 @@ export async function POST(request: NextRequest) {
   } catch (error: unknown) {
     console.error("Admin login error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
+    // TEMP: Show actual error for debugging (remove after DB connectivity confirmed)
     return NextResponse.json(
-      { success: false, error: { code: "INTERNAL_ERROR", message: process.env.NODE_ENV === 'development' ? message : "An unexpected error occurred" } },
+      { success: false, error: { code: "INTERNAL_ERROR", message } },
       { status: 500 }
     );
   }
