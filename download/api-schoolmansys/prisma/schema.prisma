@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider     = "mysql"
+  url          = env("DATABASE_URL")
+  relationMode = "foreignKeys"
+}
+
+// ============================================================================
+// Only the models needed for M-Pesa callback processing.
+// The standalone API reads/writes these tables in the shared database.
+// ============================================================================
+
+model Tenant {
+  id            String   @id @default(cuid())
+  name          String
+  subdomain     String   @unique
+  timezone      String   @default("Africa/Nairobi")
+  status        String   @default("provisioning")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  feePayments       FeePayment[]
+  mpesaTransactions MpesaTransaction[]
+  students          Student[]
+}
+
+model Student {
+  id                String    @id @default(cuid())
+  tenantId          String
+  admissionNumber   String
+  firstName         String
+  lastName          String
+  currentFeeBalance Float     @default(0)
+  status            String    @default("active")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+  feePayments       FeePayment[]
+  mpesaTransactions MpesaTransaction[]
+
+  @@unique([tenantId, admissionNumber])
+  @@index([tenantId])
+}
+
+model FeePayment {
+  id              String   @id @default(cuid())
+  tenantId        String
+  studentId       String
+  feeStructureId  String?
+  amount          Float
+  method          String   @default("cash")
+  reference       String?
+  receiptNumber   String?
+  payeeName       String?
+  collectedBy     String?
+  transactionDate DateTime @default(now())
+  status          String   @default("success")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  student Student @relation(fields: [studentId], references: [id])
+
+  @@index([tenantId])
+  @@index([studentId])
+}
+
+model MpesaTransaction {
+  id                String    @id @default(cuid())
+  tenantId          String
+  studentId         String
+  feeStructureId    String?
+  checkoutRequestId String    @unique
+  merchantRequestId String?
+  phoneNumber       String
+  amount            Float
+  accountReference  String
+  status            String    @default("pending")
+  mpesaReceipt      String?
+  resultDesc        String?
+  feePaymentId      String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant        Tenant  @relation(fields: [tenantId], references: [id])
+  student       Student @relation(fields: [studentId], references: [id])
+
+  @@index([tenantId])
+  @@index([studentId])
+  @@index([checkoutRequestId])
+  @@index([status])
+}

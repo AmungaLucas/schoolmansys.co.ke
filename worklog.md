@@ -226,3 +226,30 @@ Stage Summary:
 - Resend invite correctly clears old password and generates new token
 - Auth guards working on all protected endpoints
 - All UI pages render correctly
+
+---
+Task ID: 8
+Agent: Main Agent
+Task: Build Standalone Callback API for api.schoolmansys.co.ke
+
+Work Log:
+- Created standalone Express.js API for M-Pesa Daraja callbacks (api.schoolmansys.co.ke)
+- Separated from admin.schoolmansys.co.ke for cleaner architecture
+- Files created:
+  - app.js: Express server with helmet, JSON parsing, request logging, 404/error handlers
+  - src/routes/callbacks.js: M-Pesa STK Push callback handler (same business logic as Next.js version)
+  - src/lib/db.js: Prisma client singleton for shared MySQL database
+  - src/lib/mpesa.js: M-Pesa callback body parser
+  - prisma/schema.prisma: Minimal schema (Tenant, Student, FeePayment, MpesaTransaction only)
+  - package.json: express + @prisma/client + helmet
+- Server uses `app.listen("passenger")` for Phusion Passenger deployment
+- Callback logic: POST /callbacks/mpesa handles success (creates FeePayment + decrements balance), failure, and cancelled
+- Health checks: GET / and GET /callbacks/mpesa
+- ZIP packaged at /home/z/my-project/download/api-schoolmansys.zip (19KB, no node_modules)
+- Updated main .env: MPESA_CALLBACK_URL changed from admin.* to api.*
+
+Stage Summary:
+- Standalone callback API ready for deployment to api.schoolmansys.co.ke
+- Same database, same business logic, separate deployment
+- Deployment steps: upload ZIP -> extract -> npm install (auto-runs prisma generate) -> restart Passenger
+- .env file needs to be created on server with DATABASE_URL

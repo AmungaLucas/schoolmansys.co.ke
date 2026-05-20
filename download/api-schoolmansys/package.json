@@ -1,0 +1,21 @@
+{
+  "name": "schoolmansys-api",
+  "version": "1.0.0",
+  "description": "SchoolManSys Callback API - M-Pesa Daraja STK Push Callbacks",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "postinstall": "npx prisma generate"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.0.0",
+    "express": "^4.21.0",
+    "helmet": "^8.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.0.0"
+  }
+}
