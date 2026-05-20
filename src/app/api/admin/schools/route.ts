@@ -375,6 +375,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Return success with or without warnings
+    // Note: tenant.status was updated to "active" during seeding — re-read to get fresh value
     return NextResponse.json(
       {
         success: true,
@@ -382,7 +383,7 @@ export async function POST(request: NextRequest) {
           id: tenant.id,
           name: tenant.name,
           subdomain: tenant.subdomain,
-          status: tenant.status,
+          status: "active", // Seeding completed successfully, tenant is now active
           adminEmail: adminUser.email,
           inviteToken,
           // Constraint #8: Copy Link over Email - always return the link

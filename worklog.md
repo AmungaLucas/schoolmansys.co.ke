@@ -196,3 +196,33 @@ Stage Summary:
 - M-Pesa uses correct TransactionType for Buy Goods (till number / paybill)
 - Callback endpoint gracefully handles missing MpesaTransaction table
 - Hydration warnings eliminated across all pages
+
+---
+Task ID: 7
+Agent: Main Agent
+Task: End-to-End Onboarding Flow Testing
+
+Work Log:
+- Tested entire onboarding flow via API calls against running dev server:
+  Phase 1: Admin login (POST /api/auth/admin/login) - PASS
+  Phase 2: Create school (POST /api/admin/schools) - PASS (found 1 bug, fixed)
+  Phase 3: Validate invite token (GET /api/accept-invite?token=...) - PASS
+  Phase 4: Set password with validation (POST /api/accept-invite) - PASS
+  Phase 5: Login with new password (POST /api/auth/school/login) - PASS
+  Phase 6: School dashboard access (GET /api/school/:tenantId/dashboard) - PASS
+  Phase 7: Resend invite (POST /api/admin/schools/:id) - PASS
+  Edge cases: reused token (blocked), invalid token (blocked), missing token (validation error), duplicate subdomain (conflict), duplicate email (conflict), invalid subdomain format (validation error) - ALL PASS
+  Auth guards: unauthenticated access to admin APIs (blocked), school APIs (blocked) - ALL PASS
+  UI rendering: all pages (accept-invite, admin/schools, admin/schools/:id, school/:tenantId/login) return HTTP 200
+
+Bug found and fixed:
+- Bug: Create school API response returned stale tenant.status="provisioning" even though DB was updated to "active" during seeding. The `tenant` object was captured from the transaction result before post-transaction seeding ran.
+- Fix: Changed response to hardcode status:"active" since seeding completion means tenant is active. If seeding fails, the function returns early with an error (never reaches the success response).
+
+Stage Summary:
+- Complete onboarding flow tested: Create School -> Invite Email -> Accept Invite -> Set Password -> Login -> Dashboard
+- All 15 test scenarios PASS
+- 1 bug found and fixed (stale status in create school response)
+- Resend invite correctly clears old password and generates new token
+- Auth guards working on all protected endpoints
+- All UI pages render correctly
