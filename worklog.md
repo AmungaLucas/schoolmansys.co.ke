@@ -253,3 +253,22 @@ Stage Summary:
 - Same database, same business logic, separate deployment
 - Deployment steps: upload ZIP -> extract -> npm install (auto-runs prisma generate) -> restart Passenger
 - .env file needs to be created on server with DATABASE_URL
+
+---
+Task ID: 9
+Agent: Main Agent
+Task: Push to GitHub and Deploy to Vercel
+
+Work Log:
+- Pushed project to GitHub: https://github.com/AmungaLucas/schoolmansys.co.ke.git (branch: main)
+- Created .env.example with all required env vars (actual .env is gitignored)
+- Deployed to Vercel via API (project: schoolmansys, team: amungas-projects)
+- Set 17 environment variables on Vercel (DB, SMTP, M-Pesa credentials, all encrypted)
+- Redeployed with env vars to ensure they take effect
+- Vercel URLs: schoolmansys.vercel.app, schoolmansys-amungas-projects.vercel.app
+
+Stage Summary:
+- GitHub repo: https://github.com/AmungaLucas/schoolmansys.co.ke
+- Vercel project: https://vercel.com/amungas-projects/schoolmansys
+- Live URL: https://schoolmansys.vercel.app
+- All 17 env vars set and deployment confirmed READY
