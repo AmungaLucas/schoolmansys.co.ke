@@ -111,6 +111,24 @@ function SidebarContent({ admin, pathname, onNavigate }: { admin: AdminUser; pat
   );
 }
 
+function LoadingSkeleton() {
+  return (
+    <div className="min-h-screen flex">
+      <div className="hidden lg:flex w-64 bg-emerald-800 flex-col p-4 gap-4">
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-8 w-full" />
+      </div>
+      <div className="flex-1 p-8">
+        <Skeleton className="h-16 w-full mb-6" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    </div>
+  );
+}
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -121,7 +139,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // Login page renders without the chrome (sidebar, header, auth guard)
   const isLoginPage = pathname === '/admin/login';
 
+  // Prevent hydration mismatch: server and first client render must be identical.
+  // Until the component mounts (useEffect fires), we show a static skeleton.
+  const [mounted, setMounted] = useState(false);
+
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    // Don't run auth logic until we've mounted
+    if (!mounted) return;
+
     // Skip auth check on login page
     if (isLoginPage) {
       setLoading(false);
@@ -147,32 +176,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       }
     };
     checkAuth();
-  }, [router, isLoginPage]);
+  }, [router, isLoginPage, mounted]);
 
   // Login page renders without chrome — just the children
   if (isLoginPage) {
     return <>{children}</>;
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex" suppressHydrationWarning>
-        <div className="hidden lg:flex w-64 bg-emerald-800 flex-col p-4 gap-4">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-full" />
-        </div>
-        <div className="flex-1 p-8">
-          <Skeleton className="h-16 w-full mb-6" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-      </div>
-    );
+  // Show consistent skeleton until mounted, then during loading, then when no admin
+  if (!mounted || loading || !admin) {
+    return <LoadingSkeleton />;
   }
-
-  if (!admin) return null;
 
   return (
     <div className="min-h-screen flex bg-muted/30" suppressHydrationWarning>
