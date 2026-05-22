@@ -270,74 +270,77 @@ export async function POST(request: NextRequest) {
     try {
       // Seed academic year and terms (Kenyan 3-term system)
       const currentYear = new Date().getFullYear();
-      const academicYear = await db.academicYear.create({
-        data: {
+      const academicYear = await db.academicYear.upsert({
+        where: { tenantId_name: { tenantId: tenant.id, name: String(currentYear) } },
+        create: {
           tenantId: tenant.id,
           name: String(currentYear),
-          startDate: new Date(currentYear, 0, 27), // Late January
-          endDate: new Date(currentYear, 10, 20), // Late November
+          startDate: new Date(currentYear, 0, 27),
+          endDate: new Date(currentYear, 10, 20),
           isCurrent: true,
         },
+        update: {}, // No-op if exists
       });
 
-      const academicYearId = academicYear.id; // Capture insertId explicitly
+      const academicYearId = academicYear.id;
 
-      await db.term.createMany({
-        data: [
-          {
-            tenantId: tenant.id,
-            academicYearId,
-            name: "Term 1",
-            startDate: new Date(currentYear, 0, 27),
-            endDate: new Date(currentYear, 3, 4),
-            isCurrent: true,
+      // Seed terms (skip if already exist)
+      const existingTerms = await db.term.findMany({ where: { tenantId: tenant.id, academicYearId } });
+      const termNames = ["Term 1", "Term 2", "Term 3"];
+      const termData = [
+        { name: "Term 1", startMonth: 0, startDay: 27, endMonth: 3, endDay: 4, isCurrent: true },
+        { name: "Term 2", startMonth: 4, startDay: 5, endMonth: 6, endDay: 25, isCurrent: false },
+        { name: "Term 3", startMonth: 8, startDay: 1, endMonth: 10, endDay: 20, isCurrent: false },
+      ];
+
+      for (const td of termData) {
+        if (!existingTerms.find(t => t.name === td.name)) {
+          await db.term.create({
+            data: {
+              tenantId: tenant.id,
+              academicYearId,
+              name: td.name,
+              startDate: new Date(currentYear, td.startMonth, td.startDay),
+              endDate: new Date(currentYear, td.endMonth, td.endDay),
+              isCurrent: td.isCurrent,
+            },
+          }).catch(() => {}); // Skip on duplicate
+        }
+      }
+
+      // Seed CBC learning levels (skip if already exist)
+      const existingLevels = await db.learningLevel.findMany({ where: { tenantId: tenant.id } });
+      const levelNames = ["Early Years", "Lower Primary", "Upper Primary", "Junior School"];
+      for (let i = 0; i < levelNames.length; i++) {
+        if (!existingLevels.find(l => l.name === levelNames[i])) {
+          await db.learningLevel.create({
+            data: { tenantId: tenant.id, name: levelNames[i], levelOrder: i + 1 },
+          }).catch(() => {}); // Skip on duplicate
+        }
+      }
+
+      // Seed CBC grading rubric reference (idempotent)
+      const existingRubric = await db.auditLog.findFirst({
+        where: { action: "SEED_CBC_RUBRIC", entityType: "Tenant", entityId: tenant.id },
+      });
+      if (!existingRubric) {
+        await db.auditLog.create({
+          data: {
+            action: "SEED_CBC_RUBRIC",
+            entityType: "Tenant",
+            entityId: tenant.id,
+            details: JSON.stringify({
+              rubrics: [
+                { code: "E", descriptor: "Exceeding Expectation", meaning: "Above the required competency" },
+                { code: "M", descriptor: "Meeting Expectation", meaning: "Achieved the expected level" },
+                { code: "A", descriptor: "Approaching Expectation", meaning: "Close to meeting but not yet" },
+                { code: "B", descriptor: "Below Expectation", meaning: "Not yet achieved" },
+              ],
+            }),
+            actorType: "system",
           },
-          {
-            tenantId: tenant.id,
-            academicYearId,
-            name: "Term 2",
-            startDate: new Date(currentYear, 4, 5),
-            endDate: new Date(currentYear, 6, 25),
-            isCurrent: false,
-          },
-          {
-            tenantId: tenant.id,
-            academicYearId,
-            name: "Term 3",
-            startDate: new Date(currentYear, 8, 1),
-            endDate: new Date(currentYear, 10, 20),
-            isCurrent: false,
-          },
-        ],
-      });
-
-      // Seed CBC learning levels
-      await db.learningLevel.createMany({
-        data: [
-          { tenantId: tenant.id, name: "Early Years", levelOrder: 1 },
-          { tenantId: tenant.id, name: "Lower Primary", levelOrder: 2 },
-          { tenantId: tenant.id, name: "Upper Primary", levelOrder: 3 },
-          { tenantId: tenant.id, name: "Junior School", levelOrder: 4 },
-        ],
-      });
-
-      // Seed CBC grading rubric reference (stored as audit log for reference)
-      await db.auditLog.create({
-        data: {
-          action: "SEED_CBC_RUBRIC",
-          entityType: "Tenant",
-          entityId: tenant.id,
-          details: JSON.stringify({
-            rubrics: [
-              { code: "E", descriptor: "Exceeding Expectation", meaning: "Above the required competency" },
-              { code: "M", descriptor: "Meeting Expectation", meaning: "Achieved the expected level" },
-              { code: "A", descriptor: "Approaching Expectation", meaning: "Close to meeting but not yet" },
-              { code: "B", descriptor: "Below Expectation", meaning: "Not yet achieved" },
-            ],
-          }),
-          actorType: "system",
-        },
-      });
+        });
+      }
 
       // Mark tenant as active
       await db.tenant.update({
