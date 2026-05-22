@@ -350,12 +350,13 @@ export async function POST(request: NextRequest) {
 
     } catch (seedError) {
       console.error("Seeding failed:", seedError);
+      const seedMsg = seedError instanceof Error ? seedError.message : "Unknown seeding error";
       await db.tenant.update({
         where: { id: tenant.id },
         data: { status: "provisioning_failed" },
       }).catch(() => {});
       return NextResponse.json(
-        { success: false, error: { code: "SEEDING_FAILED", message: "School created but seeding failed. Contact support." } },
+        { success: false, error: { code: "SEEDING_FAILED", message: `School created but seeding failed: ${seedMsg}` } },
         { status: 500 }
       );
     }
