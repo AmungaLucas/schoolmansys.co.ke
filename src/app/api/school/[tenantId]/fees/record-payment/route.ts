@@ -66,7 +66,7 @@ export async function POST(
       });
 
       return { payment, newBalance: student.currentFeeBalance - Number(amount) };
-    });
+    }, { timeout: 30000 });
 
     return NextResponse.json({
       success: true,

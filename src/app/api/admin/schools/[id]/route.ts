@@ -283,7 +283,7 @@ export async function DELETE(
 
       // 5. Finally, delete the tenant itself
       await tx.tenant.delete({ where: { id } });
-    });
+    }, { timeout: 30000 }); // 30s timeout for remote MySQL
 
     // Audit log (outside transaction since tenant is deleted)
     await db.auditLog.create({

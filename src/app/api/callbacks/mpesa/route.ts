@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
         });
 
         return { feePayment, newBalance };
-      });
+      }, { timeout: 30000 });
 
       console.log(
         `[M-Pesa Callback] Payment SUCCESS: ${parsed.mpesaReceipt}, ` +

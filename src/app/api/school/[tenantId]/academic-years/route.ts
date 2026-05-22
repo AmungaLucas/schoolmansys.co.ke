@@ -105,7 +105,7 @@ export async function POST(
           terms: { where: { deletedAt: null }, orderBy: { startDate: "asc" } },
         },
       });
-    });
+    }, { timeout: 30000 });
 
     return NextResponse.json({ success: true, data: result }, { status: 201 });
   } catch (error) {

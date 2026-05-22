@@ -94,7 +94,7 @@ export async function POST(
       }
 
       return { createdCount, updatedCount };
-    });
+    }, { timeout: 30000 });
 
     return NextResponse.json({
       success: true,

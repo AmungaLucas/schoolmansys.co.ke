@@ -245,13 +245,14 @@ export async function POST(request: NextRequest) {
         });
 
         return { tenant: newTenant, role: roles[0], user: newUser };
-      });
+      }, { timeout: 30000 }); // 30s timeout for remote MySQL
 
       tenant = result.tenant;
       schoolAdminRole = result.role;
       adminUser = result.user;
     } catch (txError) {
       console.error("School creation transaction failed:", txError);
+      const msg = txError instanceof Error ? txError.message : "Unknown error";
       // Update tenant status to provisioning_failed if it was created
       if (tenant) {
         await db.tenant.update({
@@ -260,7 +261,7 @@ export async function POST(request: NextRequest) {
         }).catch(() => {});
       }
       return NextResponse.json(
-        { success: false, error: { code: "PROVISIONING_FAILED", message: "Failed to create school. Please try again." } },
+        { success: false, error: { code: "PROVISIONING_FAILED", message: `Failed to create school: ${msg}. Please try again.` } },
         { status: 500 }
       );
     }
@@ -401,8 +402,9 @@ export async function POST(request: NextRequest) {
         { status: 409 }
       );
     }
+    const msg = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { success: false, error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } },
+      { success: false, error: { code: "INTERNAL_ERROR", message: `An unexpected error occurred: ${msg}` } },
       { status: 500 }
     );
   }
