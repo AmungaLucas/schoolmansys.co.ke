@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hash } from "bcryptjs";
-import { db } from "@/lib/db";
+import { db, withRetry } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth-guard";
 import { sendInviteEmail } from "@/lib/email";
 import { Prisma } from "@prisma/client";
@@ -36,27 +35,29 @@ export async function GET(request: NextRequest) {
       where.status = status;
     }
 
-    const [schools, total] = await Promise.all([
-      db.tenant.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "desc" },
-        include: {
-          plan: {
-            select: { id: true, name: true, price: true },
-          },
-          _count: {
-            select: {
-              students: true,
-              staff: true,
-              users: true,
+    const [schools, total] = await withRetry(() =>
+      Promise.all([
+        db.tenant.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { createdAt: "desc" },
+          include: {
+            plan: {
+              select: { id: true, name: true, price: true },
+            },
+            _count: {
+              select: {
+                students: true,
+                staff: true,
+                users: true,
+              },
             },
           },
-        },
-      }),
-      db.tenant.count({ where }),
-    ]);
+        }),
+        db.tenant.count({ where }),
+      ])
+    );
 
     return NextResponse.json({
       success: true,
@@ -83,7 +84,7 @@ export async function POST(request: NextRequest) {
   const warnings: string[] = [];
 
   try {
-    const admin = await requireAdmin(request);
+    const admin = await withRetry(() => requireAdmin(request));
     if (!admin) {
       return NextResponse.json(
         { success: false, error: { code: "UNAUTHORIZED", message: "Admin authentication required" } },
@@ -111,8 +112,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check subdomain uniqueness
-    const existing = await db.tenant.findUnique({ where: { subdomain: cleanSubdomain } });
+    // Check subdomain uniqueness (with retry for unreliable DB)
+    const existing = await withRetry(() =>
+      db.tenant.findUnique({ where: { subdomain: cleanSubdomain } })
+    );
     if (existing) {
       return NextResponse.json(
         { success: false, error: { code: "CONFLICT", message: "Subdomain already taken" } },
@@ -121,9 +124,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Check email uniqueness (only active users — soft-deleted should not block reuse)
-    const existingUser = await db.user.findFirst({
-      where: { email: adminEmail.toLowerCase().trim(), deletedAt: null },
-    });
+    const existingUser = await withRetry(() =>
+      db.user.findFirst({
+        where: { email: adminEmail.toLowerCase().trim(), deletedAt: null },
+      })
+    );
     if (existingUser) {
       return NextResponse.json(
         { success: false, error: { code: "CONFLICT", message: "This email is already registered in another school" } },
@@ -141,7 +146,8 @@ export async function POST(request: NextRequest) {
     let adminUser: Awaited<ReturnType<typeof db.user.create>>;
 
     try {
-      const result = await db.$transaction(async (tx) => {
+      const result = await withRetry(() =>
+        db.$transaction(async (tx) => {
         // 1. Create tenant (status: provisioning)
         const newTenant = await tx.tenant.create({
           data: {
@@ -245,13 +251,17 @@ export async function POST(request: NextRequest) {
         });
 
         return { tenant: newTenant, role: roles[0], user: newUser };
-      }, { timeout: 30000 }); // 30s timeout for remote MySQL
+      }, { timeout: 30000 }) // 30s timeout for remote MySQL
+      );
 
       tenant = result.tenant;
       schoolAdminRole = result.role;
       adminUser = result.user;
-    } catch (txError) {
+    } catch (txError: unknown) {
       console.error("School creation transaction failed:", txError);
+      const isDbError = txError && typeof txError === 'object' && 'code' in txError;
+      const errorCode = isDbError ? (txError as { code: string }).code : '';
+      const isConnError = ['P1001', 'P1008', 'P2024'].includes(errorCode);
       const msg = txError instanceof Error ? txError.message : "Unknown error";
       // Update tenant status to provisioning_failed if it was created
       if (tenant) {
@@ -261,7 +271,12 @@ export async function POST(request: NextRequest) {
         }).catch(() => {});
       }
       return NextResponse.json(
-        { success: false, error: { code: "PROVISIONING_FAILED", message: `Failed to create school: ${msg}. Please try again.` } },
+        { success: false, error: {
+          code: isConnError ? "DB_CONNECTION_ERROR" : "PROVISIONING_FAILED",
+          message: isConnError
+            ? "Could not connect to the database. Please try again in a moment."
+            : `Failed to create school: ${msg}. Please try again.`,
+        }},
         { status: 500 }
       );
     }
@@ -348,15 +363,23 @@ export async function POST(request: NextRequest) {
         data: { status: "active" },
       });
 
-    } catch (seedError) {
+    } catch (seedError: unknown) {
       console.error("Seeding failed:", seedError);
       const seedMsg = seedError instanceof Error ? seedError.message : "Unknown seeding error";
+      const isDbError = seedError && typeof seedError === 'object' && 'code' in seedError;
+      const errorCode = isDbError ? (seedError as { code: string }).code : '';
+      const isConnError = ['P1001', 'P1008', 'P2024'].includes(errorCode);
       await db.tenant.update({
         where: { id: tenant.id },
         data: { status: "provisioning_failed" },
       }).catch(() => {});
       return NextResponse.json(
-        { success: false, error: { code: "SEEDING_FAILED", message: `School created but seeding failed: ${seedMsg}` } },
+        { success: false, error: {
+          code: isConnError ? "DB_CONNECTION_ERROR" : "SEEDING_FAILED",
+          message: isConnError
+            ? "School was created but database connection was lost during setup. Please contact support."
+            : `School created but seeding failed: ${seedMsg}`,
+        }},
         { status: 500 }
       );
     }
@@ -406,9 +429,17 @@ export async function POST(request: NextRequest) {
         { status: 409 }
       );
     }
-    const msg = error instanceof Error ? error.message : "Unknown error";
+    const isDbError = error && typeof error === 'object' && 'code' in error;
+    const errorCode = isDbError ? (error as { code: string }).code : '';
+    const isConnError = ['P1001', 'P1008', 'P2024'].includes(errorCode);
+    if (isConnError) {
+      return NextResponse.json(
+        { success: false, error: { code: "DB_CONNECTION_ERROR", message: "Could not connect to the database. The server may be temporarily unreachable. Please try again." } },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
-      { success: false, error: { code: "INTERNAL_ERROR", message: `An unexpected error occurred: ${msg}` } },
+      { success: false, error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred. Please try again or contact support." } },
       { status: 500 }
     );
   }
