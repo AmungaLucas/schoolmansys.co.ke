@@ -313,3 +313,36 @@ Stage Summary:
 - Database reliability issue identified and mitigated with retry logic
 - User-friendly error messages replace raw Prisma error leaks
 - Deployment live at https://schoolmansys-co-ke.vercel.app
+
+---
+Task ID: 3
+Agent: Main Agent + full-stack-developer subagent
+Task: Per-school M-Pesa STK Push with admin config, encryption, and toggle
+
+Work Log:
+- Added SchoolMpesaConfig model to Prisma schema (encrypted per-school M-Pesa credentials)
+- Added mpesaStkEnabled Boolean toggle on Tenant model
+- Created AES-256-GCM crypto utility (src/lib/crypto.ts): encrypt(), decrypt(), maskSecret(), getEncryptionKey()
+- Created admin API routes for M-Pesa config management:
+  - GET /api/admin/schools/[id]/mpesa-config — returns masked config + enabled status
+  - PUT /api/admin/schools/[id]/mpesa-config — save/update credentials (encrypts secret + passkey)
+  - DELETE /api/admin/schools/[id]/mpesa-config — remove config + disable STK
+  - POST /api/admin/schools/[id]/mpesa-config/test — test Daraja connection with stored credentials
+  - PATCH /api/admin/schools/[id]/mpesa-config/toggle — toggle M-Pesa ON/OFF per school
+- Updated mpesa.ts: added getSchoolOAuthToken() and initiateSchoolSTKPush() for school-specific credentials
+- Updated mpesa-initiate: checks SchoolMpesaConfig + mpesaStkEnabled before allowing STK Push; uses school credentials
+- Built admin UI: M-Pesa config tab in school detail page with toggle, credentials form, test connection, status display
+- Updated school fees page: conditional M-Pesa tab (hidden when not configured, shows admin contact when off)
+- Enhanced tenant-info API to include mpesaStkEnabled + hasMpesaConfig
+- Generated 32-byte AES encryption key, set as MPESA_ENCRYPTION_KEY env var
+- Pushed schema to MySQL database (SchoolMpesaConfig table created)
+- Committed as 5efbb21, pushed to GitHub, deployed to Vercel
+
+Stage Summary:
+- Schools can now use their OWN M-Pesa Daraja credentials for fee collection
+- Platform admin configures credentials via admin dashboard (school detail page)
+- Toggle per school: ON = school sees M-Pesa tab, OFF = hidden
+- Credentials encrypted at rest with AES-256-GCM (consumer secret, passkey)
+- Test Connection button validates Daraja OAuth without exposing credentials
+- When M-Pesa is not configured, school staff see "Contact support" message
+- Live at https://schoolmansys.co.ke
