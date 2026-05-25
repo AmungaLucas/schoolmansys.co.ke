@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
 
     const tenant = await db.tenant.findUnique({
       where: { id: tenantId, deletedAt: null },
-      select: { id: true, name: true, subdomain: true, status: true },
+      select: { id: true, name: true, subdomain: true, status: true, mpesaStkEnabled: true },
     });
 
     if (!tenant) {
@@ -30,7 +30,23 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ success: true, data: tenant });
+    // Check if M-Pesa config exists
+    const mpesaConfig = await db.schoolMpesaConfig.findUnique({
+      where: { tenantId: tenantId },
+      select: { id: true },
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        id: tenant.id,
+        name: tenant.name,
+        subdomain: tenant.subdomain,
+        status: tenant.status,
+        mpesaStkEnabled: tenant.mpesaStkEnabled,
+        hasMpesaConfig: !!mpesaConfig,
+      },
+    });
   } catch (error) {
     console.error("Tenant info error:", error);
     return NextResponse.json(

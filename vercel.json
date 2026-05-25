@@ -7,6 +7,18 @@
     },
     "src/app/api/admin/schools/*/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/admin/schools/*/mpesa-config/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/admin/schools/*/mpesa-config/test/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/admin/schools/*/mpesa-config/toggle/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/school/*/fees/mpesa-initiate/route.ts": {
+      "maxDuration": 30
     }
   }
 }

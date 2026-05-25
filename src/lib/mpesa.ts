@@ -281,6 +281,157 @@ export function parseCallback(body: MpesaCallbackBody): ParsedCallback {
 }
 
 /**
+ * Get Daraja base URL for a specific environment.
+ */
+function getBaseUrlForEnv(environment: string): string {
+  return DARAJA_BASE_URLS[environment as keyof typeof DARAJA_BASE_URLS] || DARAJA_BASE_URLS.sandbox;
+}
+
+/**
+ * Get OAuth access token using custom school credentials (not cached).
+ * Each call makes a fresh request to Daraja — no global caching.
+ *
+ * @param consumerKey - School's Daraja consumer key
+ * @param consumerSecret - School's Daraja consumer secret
+ * @param environment - 'sandbox' or 'production'
+ */
+export async function getSchoolOAuthToken(
+  consumerKey: string,
+  consumerSecret: string,
+  environment: string
+): Promise<string> {
+  const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
+  const baseUrl = getBaseUrlForEnv(environment);
+
+  const response = await fetch(`${baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Basic ${auth}`,
+    },
+  } as RequestInit);
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to get school M-Pesa OAuth token: ${response.status} - ${text}`);
+  }
+
+  const data = await response.json() as OAuthToken;
+  return data.access_token;
+}
+
+/**
+ * Configuration for school-specific STK Push.
+ */
+export interface SchoolSTKPushConfig {
+  consumerKey: string;
+  consumerSecret: string;
+  passkey: string;
+  shortcode: string;
+  tillNumber?: string;
+  environment: string;
+  callbackUrl: string;
+}
+
+/**
+ * Initiate an M-Pesa STK Push using a school's own Daraja credentials.
+ *
+ * Similar to initiateSTKPush but uses the provided config instead of env vars.
+ * Used when per-school M-Pesa configuration is enabled.
+ *
+ * @param request - Standard STK Push request parameters
+ * @param config - School's M-Pesa credentials and configuration
+ */
+export async function initiateSchoolSTKPush(
+  request: STKPushRequest,
+  config: SchoolSTKPushConfig
+): Promise<STKPushResponse> {
+  try {
+    const accessToken = await getSchoolOAuthToken(
+      config.consumerKey,
+      config.consumerSecret,
+      config.environment
+    );
+
+    const partyB = config.tillNumber || config.shortcode;
+
+    // Normalize phone number: remove leading 0 or +254
+    let phone = request.phoneNumber.replace(/\s/g, '');
+    if (phone.startsWith('+')) phone = phone.substring(1);
+    if (phone.startsWith('0')) phone = `254${phone.substring(1)}`;
+    if (!phone.startsWith('254') || phone.length !== 12) {
+      return {
+        success: false,
+        error: `Invalid phone number format. Expected 254XXXXXXXXX, got ${phone}`,
+      };
+    }
+
+    if (request.amount < 1) {
+      return {
+        success: false,
+        error: 'Amount must be at least KES 1.',
+      };
+    }
+
+    // Generate password: Base64(Shortcode + Passkey + Timestamp)
+    const timestamp = new Date().toISOString().replace(/[-:.]/g, '').substring(0, 14);
+    const password = Buffer.from(`${config.shortcode}${config.passkey}${timestamp}`).toString('base64');
+
+    const baseUrl = getBaseUrlForEnv(config.environment);
+
+    const body = {
+      BusinessShortCode: config.shortcode,
+      Password: password,
+      Timestamp: timestamp,
+      TransactionType: 'CustomerBuyGoodsOnline',
+      Amount: Math.round(request.amount),
+      PartyA: phone,
+      PartyB: partyB,
+      PhoneNumber: phone,
+      CallBackURL: config.callbackUrl,
+      AccountReference: request.accountReference.substring(0, 12),
+      TransactionDesc: request.transactionDesc.substring(0, 13),
+    };
+
+    const response = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    } as RequestInit);
+
+    const data = await response.json();
+
+    if (data.ResponseCode === '0') {
+      return {
+        success: true,
+        checkoutRequestId: data.CheckoutRequestID,
+        merchantRequestId: data.MerchantRequestID,
+        responseCode: data.ResponseCode,
+        responseDescription: data.ResponseDescription,
+        customerMessage: data.CustomerMessage,
+      };
+    }
+
+    return {
+      success: false,
+      responseCode: data.ResponseCode,
+      responseDescription: data.ResponseDescription,
+      customerMessage: data.CustomerMessage,
+      error: data.ResponseDescription || `M-Pesa error: ${data.ResponseCode}`,
+    };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown M-Pesa error';
+    console.error('[M-Pesa] School STK Push initiation failed:', message);
+    return {
+      success: false,
+      error: message,
+    };
+  }
+}
+
+/**
  * Generate a unique CheckoutRequestID for tracking pending STK Push requests.
  */
 export function generateCheckoutRef(): string {

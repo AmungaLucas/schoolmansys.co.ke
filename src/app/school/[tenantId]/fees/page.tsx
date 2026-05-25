@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import {
   Plus, Loader2, Wallet, Search, ChevronLeft, ChevronRight, CreditCard,
-  Smartphone, CheckCircle2, XCircle, Clock, RefreshCw,
+  Smartphone, CheckCircle2, XCircle, Clock, RefreshCw, ShieldAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -156,6 +156,10 @@ export default function FeesPage() {
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
   const [mpesaTransactions, setMpesaTransactions] = useState<MpesaTransaction[]>([]);
 
+  // M-Pesa availability
+  const [mpesaEnabled, setMpesaEnabled] = useState(false);
+  const [mpesaConfigured, setMpesaConfigured] = useState(false);
+
   const [loadingStructures, setLoadingStructures] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
   const [loadingMpesa, setLoadingMpesa] = useState(true);
@@ -268,15 +272,20 @@ export default function FeesPage() {
   useEffect(() => {
     async function fetchMeta() {
       try {
-        const [studentsRes, classesRes, ayRes] = await Promise.all([
+        const [studentsRes, classesRes, ayRes, tenantInfoRes] = await Promise.all([
           fetch(`/api/school/${tenantId}/students?limit=100`),
           fetch(`/api/school/${tenantId}/classes`),
           fetch(`/api/school/${tenantId}/academic-years`),
+          fetch(`/api/auth/school/tenant-info?tenantId=${tenantId}`),
         ]);
-        const [sJson, cJson, aJson] = await Promise.all([studentsRes.json(), classesRes.json(), ayRes.json()]);
+        const [sJson, cJson, aJson, tJson] = await Promise.all([studentsRes.json(), classesRes.json(), ayRes.json(), tenantInfoRes.json()]);
         if (sJson.success) setStudents(sJson.data.students);
         if (cJson.success) setClasses(cJson.data);
         if (aJson.success) setAcademicYears(aJson.data);
+        if (tJson.success) {
+          setMpesaEnabled(!!tJson.data.mpesaStkEnabled);
+          setMpesaConfigured(!!tJson.data.hasMpesaConfig);
+        }
       } catch {
         // silent
       }
@@ -803,6 +812,26 @@ export default function FeesPage() {
 
         {/* M-Pesa Tab */}
         <TabsContent value="mpesa" className="space-y-4">
+          {!mpesaEnabled || !mpesaConfigured ? (
+            <Card className="border-0 shadow-sm">
+              <CardContent className="py-12">
+                <div className="text-center max-w-md mx-auto">
+                  <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center mx-auto mb-4">
+                    <ShieldAlert className="w-6 h-6 text-gray-400" />
+                  </div>
+                  <h3 className="text-base font-semibold text-gray-900">M-Pesa is not yet configured for this school.</h3>
+                  <p className="text-sm text-gray-500 mt-2">
+                    Contact the SchoolManSys administrator to set up
+                    M-Pesa integration for your school.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-3">
+                    support@schoolmansys.co.ke
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+          <>
           {/* M-Pesa Initiate Section */}
           <Card className="border-0 shadow-sm">
             <CardHeader className="pb-4">
@@ -984,6 +1013,8 @@ export default function FeesPage() {
               </Table>
             </div>
           </Card>
+          </>
+          )}
         </TabsContent>
       </Tabs>
     </div>

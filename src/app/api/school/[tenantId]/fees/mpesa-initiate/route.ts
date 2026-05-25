@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, withRetry } from "@/lib/db";
 import { requireSchoolUser } from "@/lib/auth-guard";
-import { initiateSTKPush, generateCheckoutRef } from "@/lib/mpesa";
+import { initiateSchoolSTKPush, type SchoolSTKPushConfig } from "@/lib/mpesa";
+import { decrypt, getEncryptionKey } from "@/lib/crypto";
 
 /**
  * POST /api/school/[tenantId]/fees/mpesa-initiate
  *
  * Initiates an M-Pesa STK Push payment for a student's fee.
+ * Uses the school's own M-Pesa credentials if configured and enabled.
  *
  * Body:
  *   - studentId: string (required)
@@ -16,11 +18,13 @@ import { initiateSTKPush, generateCheckoutRef } from "@/lib/mpesa";
  *
  * Flow:
  * 1. Verify school user authentication
- * 2. Validate input (amount, phone format)
- * 3. Look up student and verify they belong to this tenant
- * 4. Create a pending MpesaTransaction record
- * 5. Initiate STK Push via Daraja API
- * 6. Return checkout info for polling/tracking
+ * 2. Check tenant has M-Pesa config and is enabled
+ * 3. Validate input (amount, phone format)
+ * 4. Look up student and verify they belong to this tenant
+ * 5. Decrypt school's M-Pesa credentials
+ * 6. Create a pending MpesaTransaction record
+ * 7. Initiate STK Push via Daraja API using school credentials
+ * 8. Return checkout info for polling/tracking
  */
 export async function POST(
   request: NextRequest,
@@ -35,6 +39,90 @@ export async function POST(
         { status: 401 }
       );
     }
+
+    // ---- Per-school M-Pesa config check ----
+    // Load tenant with mpesaStkEnabled flag and schoolMpesaConfig
+    const tenantWithConfig = await withRetry(() =>
+      db.tenant.findUnique({
+        where: { id: tenantId },
+        select: {
+          id: true,
+          mpesaStkEnabled: true,
+          schoolMpesaConfig: {
+            select: {
+              id: true,
+              consumerKey: true,
+              consumerSecretEncrypted: true,
+              passkeyEncrypted: true,
+              shortcode: true,
+              tillNumber: true,
+              environment: true,
+              isActive: true,
+            },
+          },
+        },
+      })
+    );
+
+    if (!tenantWithConfig || !tenantWithConfig.schoolMpesaConfig) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: "MPESA_NOT_CONFIGURED",
+            message: "M-Pesa is not enabled for this school. Contact your administrator.",
+          },
+        },
+        { status: 403 }
+      );
+    }
+
+    if (!tenantWithConfig.mpesaStkEnabled || !tenantWithConfig.schoolMpesaConfig.isActive) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: "MPESA_NOT_CONFIGURED",
+            message: "M-Pesa is not enabled for this school. Contact your administrator.",
+          },
+        },
+        { status: 403 }
+      );
+    }
+
+    const mpesaConfig = tenantWithConfig.schoolMpesaConfig;
+
+    // Decrypt credentials
+    let consumerSecret: string;
+    let passkey: string;
+    try {
+      const encryptionKey = getEncryptionKey();
+      consumerSecret = decrypt(mpesaConfig.consumerSecretEncrypted, encryptionKey);
+      passkey = decrypt(mpesaConfig.passkeyEncrypted, encryptionKey);
+    } catch {
+      console.error("[M-Pesa Initiate] Failed to decrypt school M-Pesa credentials");
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: "MPESA_CONFIG_ERROR",
+            message: "M-Pesa configuration error. Contact your administrator.",
+          },
+        },
+        { status: 500 }
+      );
+    }
+
+    // Build the school-specific STK Push config
+    const schoolMpesaConfig: SchoolSTKPushConfig = {
+      consumerKey: mpesaConfig.consumerKey,
+      consumerSecret,
+      passkey,
+      shortcode: mpesaConfig.shortcode,
+      tillNumber: mpesaConfig.tillNumber || undefined,
+      environment: mpesaConfig.environment,
+      callbackUrl: process.env.MPESA_CALLBACK_URL || "",
+    };
 
     const body = await request.json();
     const { studentId, amount, phoneNumber, feeStructureId } = body;
@@ -76,16 +164,18 @@ export async function POST(
     }
 
     // Verify student exists and belongs to this tenant
-    const student = await db.student.findFirst({
-      where: { id: studentId, tenantId, deletedAt: null },
-      select: {
-        id: true,
-        admissionNumber: true,
-        firstName: true,
-        lastName: true,
-        currentFeeBalance: true,
-      },
-    });
+    const student = await withRetry(() =>
+      db.student.findFirst({
+        where: { id: studentId, tenantId, deletedAt: null },
+        select: {
+          id: true,
+          admissionNumber: true,
+          firstName: true,
+          lastName: true,
+          currentFeeBalance: true,
+        },
+      })
+    );
 
     if (!student) {
       return NextResponse.json(
@@ -95,14 +185,16 @@ export async function POST(
     }
 
     // Check for any existing pending M-Pesa transaction for this student
-    const existingPending = await db.mpesaTransaction.findFirst({
-      where: {
-        studentId,
-        tenantId,
-        status: "pending",
-        createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) }, // Within last 5 minutes
-      },
-    });
+    const existingPending = await withRetry(() =>
+      db.mpesaTransaction.findFirst({
+        where: {
+          studentId,
+          tenantId,
+          status: "pending",
+          createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) }, // Within last 5 minutes
+        },
+      })
+    );
 
     if (existingPending) {
       return NextResponse.json(
@@ -117,34 +209,39 @@ export async function POST(
       );
     }
 
-    // Initiate STK Push
+    // Initiate STK Push using school's credentials
     const accountReference = `SCH-${student.admissionNumber}`;
     const transactionDesc = `Fee: ${student.firstName} ${student.lastName}`;
 
-    const stkResult = await initiateSTKPush({
-      phoneNumber,
-      amount: numAmount,
-      accountReference,
-      transactionDesc,
-    });
+    const stkResult = await initiateSchoolSTKPush(
+      {
+        phoneNumber,
+        amount: numAmount,
+        accountReference,
+        transactionDesc,
+      },
+      schoolMpesaConfig
+    );
 
     if (!stkResult.success || !stkResult.checkoutRequestId) {
       // Still create a failed record for audit trail
       if (stkResult.checkoutRequestId) {
-        await db.mpesaTransaction.create({
-          data: {
-            tenantId,
-            studentId,
-            feeStructureId: feeStructureId || null,
-            checkoutRequestId: stkResult.checkoutRequestId,
-            merchantRequestId: stkResult.merchantRequestId || null,
-            phoneNumber,
-            amount: numAmount,
-            accountReference,
-            status: "failed",
-            resultDesc: stkResult.error || stkResult.responseDescription || "STK Push initiation failed",
-          },
-        });
+        await withRetry(() =>
+          db.mpesaTransaction.create({
+            data: {
+              tenantId,
+              studentId,
+              feeStructureId: feeStructureId || null,
+              checkoutRequestId: stkResult.checkoutRequestId!,
+              merchantRequestId: stkResult.merchantRequestId || null,
+              phoneNumber,
+              amount: numAmount,
+              accountReference,
+              status: "failed",
+              resultDesc: stkResult.error || stkResult.responseDescription || "STK Push initiation failed",
+            },
+          })
+        );
       }
 
       return NextResponse.json(
@@ -160,20 +257,22 @@ export async function POST(
     }
 
     // Create the pending M-Pesa transaction record
-    const mpesaTx = await db.mpesaTransaction.create({
-      data: {
-        tenantId,
-        studentId,
-        feeStructureId: feeStructureId || null,
-        checkoutRequestId: stkResult.checkoutRequestId!,
-        merchantRequestId: stkResult.merchantRequestId || null,
-        phoneNumber,
-        amount: numAmount,
-        accountReference,
-        status: "pending",
-        resultDesc: stkResult.customerMessage || "STK Push sent, awaiting response",
-      },
-    });
+    const mpesaTx = await withRetry(() =>
+      db.mpesaTransaction.create({
+        data: {
+          tenantId,
+          studentId,
+          feeStructureId: feeStructureId || null,
+          checkoutRequestId: stkResult.checkoutRequestId!,
+          merchantRequestId: stkResult.merchantRequestId || null,
+          phoneNumber,
+          amount: numAmount,
+          accountReference,
+          status: "pending",
+          resultDesc: stkResult.customerMessage || "STK Push sent, awaiting response",
+        },
+      })
+    );
 
     return NextResponse.json({
       success: true,
@@ -227,25 +326,27 @@ export async function GET(
     }
 
     // Get recent transactions for this student (last 24 hours)
-    const transactions = await db.mpesaTransaction.findMany({
-      where: {
-        studentId,
-        tenantId,
-        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 10,
-      select: {
-        id: true,
-        amount: true,
-        phoneNumber: true,
-        status: true,
-        mpesaReceipt: true,
-        resultDesc: true,
-        accountReference: true,
-        createdAt: true,
-      },
-    });
+    const transactions = await withRetry(() =>
+      db.mpesaTransaction.findMany({
+        where: {
+          studentId,
+          tenantId,
+          createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        select: {
+          id: true,
+          amount: true,
+          phoneNumber: true,
+          status: true,
+          mpesaReceipt: true,
+          resultDesc: true,
+          accountReference: true,
+          createdAt: true,
+        },
+      })
+    );
 
     // Get the latest pending one specifically
     const pending = transactions.find((t) => t.status === "pending");

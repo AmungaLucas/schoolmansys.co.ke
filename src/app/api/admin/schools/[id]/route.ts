@@ -52,7 +52,21 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ success: true, data: tenant });
+    // Check for M-Pesa config existence
+    const mpesaConfig = await db.schoolMpesaConfig.findUnique({
+      where: { tenantId: id },
+      select: { isActive: true, environment: true },
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...tenant,
+        mpesaStkEnabled: tenant.mpesaStkEnabled,
+        hasMpesaConfig: !!mpesaConfig,
+        mpesaEnvironment: mpesaConfig?.environment || null,
+      },
+    });
   } catch (error) {
     console.error("Get school error:", error);
     return NextResponse.json(

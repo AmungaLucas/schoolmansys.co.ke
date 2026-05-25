@@ -23,6 +23,15 @@ import {
   ExternalLink,
   Pencil,
   Trash2,
+  Wifi,
+  WifiOff,
+  KeyRound,
+  ShieldCheck,
+  ShieldAlert,
+  RefreshCw,
+  Smartphone,
+  AlertTriangle,
+  XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -60,6 +69,9 @@ interface SchoolDetail {
   expiryDate: string | null;
   createdAt: string;
   updatedAt: string;
+  mpesaStkEnabled: boolean;
+  hasMpesaConfig: boolean;
+  mpesaEnvironment: string | null;
   plan: {
     id: string;
     name: string;
@@ -138,6 +150,45 @@ export default function SchoolDetailPage() {
   const [editEmailValue, setEditEmailValue] = useState('');
   const [editEmailLoading, setEditEmailLoading] = useState(false);
 
+  // M-Pesa config state
+  const [mpesaConfig, setMpesaConfig] = useState<{
+    config: {
+      id: string;
+      consumerKey: string;
+      consumerSecretMasked: string;
+      passkeyMasked: string;
+      shortcode: string;
+      tillNumber: string | null;
+      environment: string;
+      isActive: boolean;
+      lastTestedAt: string | null;
+      lastTestResult: string | null;
+      configuredAt: string;
+      updatedAt: string;
+    } | null;
+    mpesaStkEnabled: boolean;
+    maskedSecrets: boolean;
+  } | null>(null);
+  const [mpesaLoading, setMpesaLoading] = useState(false);
+  const [mpesaSaving, setMpesaSaving] = useState(false);
+  const [mpesaTesting, setMpesaTesting] = useState(false);
+  const [mpesaDeleting, setMpesaDeleting] = useState(false);
+  const [mpesaToggling, setMpesaToggling] = useState(false);
+  const [mpesaForm, setMpesaForm] = useState({
+    consumerKey: '',
+    consumerSecret: '',
+    passkey: '',
+    shortcode: '',
+    tillNumber: '',
+    environment: 'sandbox',
+  });
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    status: 'success' | 'failed' | 'error';
+    message: string;
+    timestamp: string;
+  } | null>(null);
+
   // Resend invite
   const [resendLoading, setResendLoading] = useState(false);
   const [resendResult, setResendResult] = useState<{
@@ -169,6 +220,174 @@ export default function SchoolDetailPage() {
   useEffect(() => {
     fetchSchool();
   }, [schoolId]);
+
+  // Fetch M-Pesa config
+  const fetchMpesaConfig = async () => {
+    setMpesaLoading(true);
+    try {
+      const res = await fetch(`/api/admin/schools/${schoolId}/mpesa-config`);
+      const json = await res.json();
+      if (json.success) {
+        setMpesaConfig(json.data);
+        if (json.data.config) {
+          const cfg = json.data.config;
+          setMpesaForm({
+            consumerKey: cfg.consumerKey.slice(0, 6) + '...',
+            consumerSecret: '',
+            passkey: '',
+            shortcode: cfg.shortcode,
+            tillNumber: cfg.tillNumber || '',
+            environment: cfg.environment,
+          });
+          // Set test result from config if available
+          if (cfg.lastTestResult) {
+            setTestResult({
+              status: cfg.lastTestResult === 'success' ? 'success' : 'failed',
+              message: cfg.lastTestResult === 'success' ? 'Connection successful' : cfg.lastTestResult,
+              timestamp: cfg.lastTestedAt || new Date().toISOString(),
+            });
+          }
+        }
+      }
+    } catch {
+      // silent
+    } finally {
+      setMpesaLoading(false);
+    }
+  };
+
+  const handleToggleMpesa = async (enabled: boolean) => {
+    setMpesaToggling(true);
+    try {
+      const res = await fetch(`/api/admin/schools/${schoolId}/mpesa-config/toggle`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        toast.error(json.error?.message || 'Failed to toggle M-Pesa');
+        return;
+      }
+      toast.success(enabled ? 'M-Pesa STK Push enabled' : 'M-Pesa STK Push disabled');
+      fetchSchool();
+      fetchMpesaConfig();
+    } catch {
+      toast.error('Network error');
+    } finally {
+      setMpesaToggling(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setMpesaTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(`/api/admin/schools/${schoolId}/mpesa-config/test`, {
+        method: 'POST',
+      });
+      const json = await res.json();
+      if (json.success) {
+        setTestResult({
+          status: 'success',
+          message: 'Connection successful',
+          timestamp: new Date().toISOString(),
+        });
+        toast.success('M-Pesa connection test passed');
+      } else {
+        setTestResult({
+          status: 'failed',
+          message: json.error?.message || 'Authentication error',
+          timestamp: new Date().toISOString(),
+        });
+        toast.error('M-Pesa connection test failed', {
+          description: json.error?.message,
+        });
+      }
+    } catch {
+      setTestResult({
+        status: 'error',
+        message: 'Network error — could not reach the server',
+        timestamp: new Date().toISOString(),
+      });
+      toast.error('Connection test failed', { description: 'Network error' });
+    } finally {
+      setMpesaTesting(false);
+    }
+  };
+
+  const handleSaveCredentials = async () => {
+    const { consumerKey, consumerSecret, passkey, shortcode, tillNumber, environment } = mpesaForm;
+    // When editing existing config, consumerKey has '...' suffix — check if user edited it
+    if (!consumerKey || consumerKey.endsWith('...')) {
+      toast.error('Consumer Key is required — please enter the full value');
+      return;
+    }
+    if (!consumerSecret) {
+      toast.error('Consumer Secret is required — must be re-entered for updates');
+      return;
+    }
+    if (!passkey) {
+      toast.error('Passkey is required — must be re-entered for updates');
+      return;
+    }
+    if (!shortcode) {
+      toast.error('Shortcode is required');
+      return;
+    }
+
+    setMpesaSaving(true);
+    try {
+      const res = await fetch(`/api/admin/schools/${schoolId}/mpesa-config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          consumerKey,
+          consumerSecret,
+          passkey,
+          shortcode,
+          tillNumber: tillNumber || undefined,
+          environment,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        toast.error(json.error?.message || 'Failed to save credentials');
+        return;
+      }
+      toast.success('M-Pesa credentials saved successfully');
+      fetchSchool();
+      fetchMpesaConfig();
+    } catch {
+      toast.error('Network error');
+    } finally {
+      setMpesaSaving(false);
+    }
+  };
+
+  const handleDeleteConfig = async () => {
+    setMpesaDeleting(true);
+    try {
+      const res = await fetch(`/api/admin/schools/${schoolId}/mpesa-config`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        toast.error(json.error?.message || 'Failed to delete configuration');
+        return;
+      }
+      toast.success('M-Pesa configuration deleted');
+      setMpesaConfig(null);
+      setMpesaForm({ consumerKey: '', consumerSecret: '', passkey: '', shortcode: '', tillNumber: '', environment: 'sandbox' });
+      setTestResult(null);
+      setShowDeleteConfirm(false);
+      fetchSchool();
+    } catch {
+      toast.error('Network error');
+    } finally {
+      setMpesaDeleting(false);
+    }
+  };
 
   const handleAction = async () => {
     if (!confirmAction) return;
@@ -486,11 +705,16 @@ export default function SchoolDetailPage() {
         </Card>
       </div>
 
-      {/* Tabs: Overview, Payments */}
-      <Tabs defaultValue="overview" className="space-y-6">
+      {/* Tabs: Overview, Payments, M-Pesa */}
+      <Tabs defaultValue="overview" className="space-y-6" onValueChange={(value) => {
+        if (value === 'mpesa' && !mpesaConfig && !mpesaLoading) {
+          fetchMpesaConfig();
+        }
+      }}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="payments">Payments ({school.payments.length})</TabsTrigger>
+          <TabsTrigger value="mpesa" className="gap-1.5"><Smartphone className="w-3.5 h-3.5" /> M-Pesa</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
@@ -707,6 +931,333 @@ export default function SchoolDetailPage() {
                     </TableBody>
                   </Table>
                 </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* M-Pesa Configuration Tab */}
+        <TabsContent value="mpesa" className="space-y-6">
+          {/* Toggle Card */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center">
+                  <Smartphone className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div className="flex-1">
+                  <CardTitle className="text-base">M-Pesa STK Push</CardTitle>
+                  <CardDescription>
+                    Enable M-Pesa payment collection for this school. Parents will receive STK Push prompts
+                    on their phones when school staff initiate fee payments.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                {/* Custom Toggle Buttons */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => handleToggleMpesa(true)}
+                    disabled={mpesaToggling || (mpesaConfig?.mpesaStkEnabled ?? school.mpesaStkEnabled)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-l-lg border-r-0 border text-sm font-medium transition-colors ${
+                      (mpesaConfig?.mpesaStkEnabled ?? school.mpesaStkEnabled)
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-white text-gray-600 border-gray-300 hover:bg-emerald-50'
+                    } ${mpesaToggling ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                  >
+                    {mpesaToggling ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Wifi className="w-4 h-4" />
+                    )}
+                    Enabled
+                  </button>
+                  <button
+                    onClick={() => handleToggleMpesa(false)}
+                    disabled={mpesaToggling || !(mpesaConfig?.mpesaStkEnabled ?? school.mpesaStkEnabled)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-r-lg border text-sm font-medium transition-colors ${
+                      !(mpesaConfig?.mpesaStkEnabled ?? school.mpesaStkEnabled)
+                        ? 'bg-gray-100 text-gray-900 border-gray-300'
+                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                    } ${mpesaToggling ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                  >
+                    {mpesaToggling ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <WifiOff className="w-4 h-4" />
+                    )}
+                    Disabled
+                  </button>
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    fetchMpesaConfig().then(() => handleTestConnection());
+                  }}
+                  disabled={mpesaTesting || mpesaLoading}
+                >
+                  {mpesaTesting ? (
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4 mr-1.5" />
+                  )}
+                  Test Connection
+                </Button>
+              </div>
+
+              {/* Status indicator */}
+              {(mpesaConfig?.config || mpesaConfig?.mpesaStkEnabled || school.hasMpesaConfig) ? (
+                <div className="flex items-center gap-2 text-sm">
+                  {(mpesaConfig?.mpesaStkEnabled ?? school.mpesaStkEnabled) ? (
+                    <>
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                      <span className="text-emerald-700 font-medium">Connected</span>
+                      <span className="text-muted-foreground">
+                        ({mpesaConfig?.config?.environment || school.mpesaEnvironment || 'sandbox'})
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldAlert className="w-4 h-4 text-amber-500" />
+                      <span className="text-amber-700 font-medium">Disabled</span>
+                      <span className="text-muted-foreground">Configuration exists but STK Push is off</span>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm">
+                  <ShieldAlert className="w-4 h-4 text-gray-400" />
+                  <span className="text-muted-foreground">Not configured</span>
+                  <span className="text-muted-foreground">· No credentials set</span>
+                </div>
+              )}
+
+              {/* Test result */}
+              {testResult && (
+                <div
+                  className={`rounded-lg border p-3 flex items-start gap-2 ${
+                    testResult.status === 'success'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                      : 'bg-red-50 border-red-200 text-red-700'
+                  }`}
+                >
+                  {testResult.status === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+                  ) : (
+                    <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                  )}
+                  <div className="text-sm">
+                    <span className="font-medium">
+                      {testResult.status === 'success' ? 'Connected' : 'Test failed'}
+                    </span>
+                    <span className="text-muted-foreground"> · {testResult.message}</span>
+                    <span className="block text-xs text-muted-foreground mt-0.5">
+                      Last tested {testResult.timestamp ? new Date(testResult.timestamp).toLocaleString('en-KE') : 'just now'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Production Warning Banner */}
+          {(mpesaConfig?.config?.environment || mpesaForm.environment) === 'production' && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-amber-800">Production Environment Active</p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  Real M-Pesa transactions will be processed. Ensure all credentials are correct and have been tested in Sandbox first.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Credentials Card */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                  <KeyRound className="w-5 h-5 text-blue-600" />
+                </div>
+                <div className="flex-1">
+                  <CardTitle className="text-base">Daraja API Credentials</CardTitle>
+                  <CardDescription>
+                    {mpesaConfig?.config
+                      ? 'Update M-Pesa credentials for this school. Secrets must be re-entered to update.'
+                      : 'Configure M-Pesa Daraja API credentials for this school.'}
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {mpesaLoading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="mpesa-consumer-key">Consumer Key</Label>
+                      <Input
+                        id="mpesa-consumer-key"
+                        value={mpesaForm.consumerKey}
+                        onChange={(e) => setMpesaForm({ ...mpesaForm, consumerKey: e.target.value })}
+                        placeholder="e.g., cl_xxxxxxxxxxxxxxxx"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="mpesa-consumer-secret">
+                        Consumer Secret
+                        {mpesaConfig?.config && (
+                          <span className="text-xs text-muted-foreground ml-1">(re-enter to update)</span>
+                        )}
+                      </Label>
+                      <Input
+                        id="mpesa-consumer-secret"
+                        type="password"
+                        value={mpesaConfig?.config ? (mpesaForm.consumerSecret || '****') : mpesaForm.consumerSecret}
+                        onChange={(e) => setMpesaForm({ ...mpesaForm, consumerSecret: e.target.value })}
+                        placeholder={mpesaConfig?.config ? '****' : 'Enter consumer secret'}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="mpesa-passkey">
+                        Passkey
+                        {mpesaConfig?.config && (
+                          <span className="text-xs text-muted-foreground ml-1">(re-enter to update)</span>
+                        )}
+                      </Label>
+                      <Input
+                        id="mpesa-passkey"
+                        type="password"
+                        value={mpesaConfig?.config ? (mpesaForm.passkey || '****') : mpesaForm.passkey}
+                        onChange={(e) => setMpesaForm({ ...mpesaForm, passkey: e.target.value })}
+                        placeholder={mpesaConfig?.config ? '****' : 'Enter passkey'}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="mpesa-shortcode">Shortcode / Till</Label>
+                      <Input
+                        id="mpesa-shortcode"
+                        value={mpesaForm.shortcode}
+                        onChange={(e) => setMpesaForm({ ...mpesaForm, shortcode: e.target.value })}
+                        placeholder="e.g., 174379"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="mpesa-till">Till Number (optional)</Label>
+                      <Input
+                        id="mpesa-till"
+                        value={mpesaForm.tillNumber}
+                        onChange={(e) => setMpesaForm({ ...mpesaForm, tillNumber: e.target.value })}
+                        placeholder="Enter till number if using Paybill"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="mpesa-environment">Environment</Label>
+                      <div className="flex items-center gap-3 mt-1">
+                        <button
+                          onClick={() => setMpesaForm({ ...mpesaForm, environment: 'sandbox' })}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-l-lg border-r-0 border text-sm font-medium transition-colors ${
+                            mpesaForm.environment === 'sandbox'
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                          } cursor-pointer`}
+                        >
+                          Sandbox
+                        </button>
+                        <button
+                          onClick={() => setMpesaForm({ ...mpesaForm, environment: 'production' })}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-r-lg border text-sm font-medium transition-colors ${
+                            mpesaForm.environment === 'production'
+                              ? 'bg-amber-600 text-white border-amber-600'
+                              : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                          } cursor-pointer`}
+                        >
+                          Production
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Sandbox warning */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <p className="text-xs text-blue-700">
+                      Always test with Sandbox before going to Production. Use Safaricom&apos;s Daraja sandbox
+                      credentials to verify your integration.
+                    </p>
+                  </div>
+
+                  <Separator />
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                    <Button
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                      onClick={handleSaveCredentials}
+                      disabled={mpesaSaving}
+                    >
+                      {mpesaSaving ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <KeyRound className="w-4 h-4 mr-2" />
+                          {mpesaConfig?.config ? 'Update Credentials' : 'Save Credentials'}
+                        </>
+                      )}
+                    </Button>
+
+                    {mpesaConfig?.config && (
+                      showDeleteConfirm ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-destructive">Are you sure?</span>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={handleDeleteConfig}
+                            disabled={mpesaDeleting}
+                          >
+                            {mpesaDeleting ? (
+                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-3.5 h-3.5 mr-1" />
+                            )}
+                            Confirm Delete
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setShowDeleteConfirm(false)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-destructive hover:text-destructive hover:bg-red-50"
+                          onClick={() => setShowDeleteConfirm(true)}
+                        >
+                          <Trash2 className="w-4 h-4 mr-1.5" />
+                          Delete Configuration
+                        </Button>
+                      )
+                    )}
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>

@@ -22,42 +22,45 @@ model GlobalUser {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  auditLogs     AuditLog[]
+  auditLogs          AuditLog[]
+  configuredSchools  SchoolMpesaConfig[]
 }
 
 model Tenant {
-  id            String   @id @default(cuid())
-  name          String
-  subdomain     String   @unique
-  timezone      String   @default("Africa/Nairobi")
-  status        String   @default("provisioning")
-  planId        String?
-  planStartDate DateTime?
-  expiryDate    DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  deletedAt     DateTime?
+  id              String   @id @default(cuid())
+  name            String
+  subdomain       String   @unique
+  timezone        String   @default("Africa/Nairobi")
+  status          String   @default("provisioning")
+  mpesaStkEnabled Boolean  @default(false)
+  planId          String?
+  planStartDate   DateTime?
+  expiryDate      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
 
-  plan              Plan?              @relation(fields: [planId], references: [id])
-  users             User[]
-  payments          Payment[]
-  academicYears     AcademicYear[]
-  learningLevels    LearningLevel[]
-  classes           Class[]
-  learningAreas     LearningArea[]
-  staff             Staff[]
-  students          Student[]
-  guardians         Guardian[]
-  feeStructures     FeeStructure[]
-  feePayments       FeePayment[]
-  roles             Role[]
-  attendance        Attendance[]
-  attendanceArchive AttendanceArchive[]
-  assessments       Assessment[]
-  grades            Grade[]
-  conductRecords    ConductRecord[]
-  healthRecords     HealthRecord[]
-  messageQueue      MessageQueue[]
+  plan                 Plan?                @relation(fields: [planId], references: [id])
+  schoolMpesaConfig    SchoolMpesaConfig?
+  users                User[]
+  payments             Payment[]
+  academicYears        AcademicYear[]
+  learningLevels       LearningLevel[]
+  classes              Class[]
+  learningAreas        LearningArea[]
+  staff                Staff[]
+  students             Student[]
+  guardians            Guardian[]
+  feeStructures        FeeStructure[]
+  feePayments          FeePayment[]
+  roles                Role[]
+  attendance           Attendance[]
+  attendanceArchive    AttendanceArchive[]
+  assessments          Assessment[]
+  grades               Grade[]
+  conductRecords       ConductRecord[]
+  healthRecords        HealthRecord[]
+  messageQueue         MessageQueue[]
   transportRoutes      TransportRoute[]
   transportAssignments TransportAssignment[]
   salaryScales         SalaryScale[]
@@ -131,6 +134,30 @@ model MpesaTransaction {
   @@index([studentId])
   @@index([checkoutRequestId])
   @@index([status])
+}
+
+/// Per-school M-Pesa Daraja configuration (encrypted credentials).
+/// Each tenant can have its own M-Pesa credentials for STK Push.
+model SchoolMpesaConfig {
+  id                      String    @id @default(cuid())
+  tenantId                String    @unique
+  consumerKey             String
+  /// AES-256-GCM encrypted consumer secret
+  consumerSecretEncrypted String    @db.Text
+  /// AES-256-GCM encrypted passkey
+  passkeyEncrypted        String    @db.Text
+  shortcode               String
+  tillNumber              String?
+  environment             String    @default("sandbox")
+  isActive                Boolean   @default(true)
+  lastTestedAt            DateTime?
+  lastTestResult          String?
+  configuredById          String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  tenant       Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  configuredBy GlobalUser? @relation(fields: [configuredById], references: [id])
 }
 
 model AuditLog {
