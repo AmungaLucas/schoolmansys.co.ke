@@ -119,7 +119,7 @@ export async function initiateSTKPush(request: STKPushRequest): Promise<STKPushR
     const accessToken = await getOAuthToken();
     const shortcode = process.env.MPESA_SHORTCODE || '';
     const passkey = process.env.MPESA_PASSKEY || '';
-    const partyB = process.env.MPESA_PARTY_B || shortcode;
+    const tillNumber = process.env.MPESA_PARTY_B || '';
 
     if (!shortcode || !passkey) {
       throw new Error('MPESA_SHORTCODE and MPESA_PASSKEY must be configured.');
@@ -143,6 +143,13 @@ export async function initiateSTKPush(request: STKPushRequest): Promise<STKPushR
       };
     }
 
+    // Determine TransactionType and PartyB based on whether a Till Number is configured.
+    // Till Number (Buy Goods): CustomerBuyGoodsOnline, PartyB = till number
+    // Paybill (no till): CustomerPayBillOnline, PartyB = shortcode
+    const isTill = !!tillNumber;
+    const transactionType = isTill ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline';
+    const partyB = isTill ? tillNumber : shortcode;
+
     // Generate password: Base64(Shortcode + Passkey + Timestamp)
     const timestamp = new Date().toISOString().replace(/[-:.]/g, '').substring(0, 14);
     const password = Buffer.from(`${shortcode}${passkey}${timestamp}`).toString('base64');
@@ -151,7 +158,7 @@ export async function initiateSTKPush(request: STKPushRequest): Promise<STKPushR
       BusinessShortCode: shortcode,
       Password: password,
       Timestamp: timestamp,
-      TransactionType: 'CustomerBuyGoodsOnline',
+      TransactionType: transactionType,
       Amount: Math.round(request.amount),
       PartyA: phone,
       PartyB: partyB,
@@ -352,7 +359,12 @@ export async function initiateSchoolSTKPush(
       config.environment
     );
 
-    const partyB = config.tillNumber || config.shortcode;
+    // Determine TransactionType and PartyB based on whether a Till Number is configured.
+    // Till Number (Buy Goods): CustomerBuyGoodsOnline, PartyB = till number
+    // Paybill (no till): CustomerPayBillOnline, PartyB = shortcode
+    const isTill = !!config.tillNumber;
+    const transactionType = isTill ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline';
+    const partyB = isTill ? config.tillNumber! : config.shortcode;
 
     // Normalize phone number: remove leading 0 or +254
     let phone = request.phoneNumber.replace(/\s/g, '');
@@ -382,7 +394,7 @@ export async function initiateSchoolSTKPush(
       BusinessShortCode: config.shortcode,
       Password: password,
       Timestamp: timestamp,
-      TransactionType: 'CustomerBuyGoodsOnline',
+      TransactionType: transactionType,
       Amount: Math.round(request.amount),
       PartyA: phone,
       PartyB: partyB,

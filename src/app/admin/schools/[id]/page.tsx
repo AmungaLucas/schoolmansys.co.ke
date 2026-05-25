@@ -1017,7 +1017,8 @@ export default function SchoolDetailPage() {
                       <ShieldCheck className="w-4 h-4 text-emerald-600" />
                       <span className="text-emerald-700 font-medium">Connected</span>
                       <span className="text-muted-foreground">
-                        ({mpesaConfig?.config?.environment || school.mpesaEnvironment || 'sandbox'})
+                        ({mpesaConfig?.config?.environment || school.mpesaEnvironment || 'sandbox'}
+                        {mpesaConfig?.config?.tillNumber ? ' · Buy Goods/Till' : ' · Paybill'})
                       </span>
                     </>
                   ) : (
@@ -1145,13 +1146,14 @@ export default function SchoolDetailPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="mpesa-shortcode">Shortcode / Till</Label>
+                      <Label htmlFor="mpesa-shortcode">Business Shortcode *</Label>
                       <Input
                         id="mpesa-shortcode"
                         value={mpesaForm.shortcode}
                         onChange={(e) => setMpesaForm({ ...mpesaForm, shortcode: e.target.value })}
-                        placeholder="e.g., 174379"
+                        placeholder="Paybill number or Lipa Na M-Pesa shortcode"
                       />
+                      <p className="text-xs text-muted-foreground">Used for password generation. Always required.</p>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="mpesa-till">Till Number (optional)</Label>
@@ -1159,8 +1161,13 @@ export default function SchoolDetailPage() {
                         id="mpesa-till"
                         value={mpesaForm.tillNumber}
                         onChange={(e) => setMpesaForm({ ...mpesaForm, tillNumber: e.target.value })}
-                        placeholder="Enter till number if using Paybill"
+                        placeholder="e.g., 9393975"
                       />
+                      <p className="text-xs text-muted-foreground">
+                        {mpesaForm.tillNumber
+                          ? 'Buy Goods (Till) mode will be used'
+                          : 'Leave empty for Paybill mode, fill for Till/Buy Goods mode'}
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="mpesa-environment">Environment</Label>
