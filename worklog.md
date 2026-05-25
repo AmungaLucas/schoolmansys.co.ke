@@ -291,3 +291,25 @@ Stage Summary:
 - Secondary: secure:true flag rejected cookies over HTTP behind Caddy reverse proxy
 - Fix verified: /me endpoint now correctly reads cookies (tested with manual cookie injection)
 - Committed as 9efe424, pushed to main branch
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix onboarding error + push to GitHub + deploy to Vercel
+
+Work Log:
+- Pushed to GitHub: https://github.com/AmungaLucas/schoolmansys.co.ke.git (commit 046a803: removed .env from tracking)
+- Investigated "An unexpected error occurred" during school onboarding
+- Root cause: MySQL database at da27.host-ww.net is intermittently unreachable (1/3 connections fail)
+- Added withRetry() utility to src/lib/db.ts — retries P1001/P1008/P2024 up to 2 times with 1s delay
+- Added connect_timeout=10 to MySQL URL for faster failure detection
+- Updated POST /api/admin/schools with retry on all DB operations
+- Updated GET /api/admin/schools with retry
+- Improved error messages: DB connection errors now return 503 with user-friendly message
+- Removed unused bcryptjs import from schools route
+- Committed as bb8d233, pushed to GitHub, deployed to Vercel (schoolmansys-co-ke.vercel.app)
+
+Stage Summary:
+- Database reliability issue identified and mitigated with retry logic
+- User-friendly error messages replace raw Prisma error leaks
+- Deployment live at https://schoolmansys-co-ke.vercel.app
